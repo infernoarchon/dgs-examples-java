@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ComponentProps } from "react"
+import { useEffect, useMemo, useRef, useState, type ComponentProps } from "react"
 import { useQuery } from "@tanstack/react-query"
 import {
   ArrowLeft,
@@ -14,6 +14,7 @@ import {
   Volume2,
   X,
   Loader2,
+  Pause,
 } from "lucide-react"
 import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
@@ -53,6 +54,25 @@ const taglineFor = (show: Show) =>
 const getHeroSummary = (show: Show, details: OmdbDetailsMap) =>
   details[show.id]?.plot ?? fallbackHeroDescription(show)
 
+const NETFLIX_LOGO = "/images/logos/netflix-logo.svg"
+const LOGO_MAP: Record<string, string> = {
+  "stranger things": "/images/logos/stranger-things-logo.svg",
+  "ozark": "/images/logos/ozark-logo.svg",
+  "the crown": "/images/logos/the-crown-logo.png",
+  "dead to me": "/images/logos/dead-to-me-logo.png",
+  "orange is the new black": "/images/logos/orange-is-the-new-black-logo.svg",
+}
+
+const resolveLogoFor = (show: Show) => {
+  const key = show.title?.toLowerCase()
+  return key ? LOGO_MAP[key] ?? null : null
+}
+
+const needsExtraBrightness = (show: Show) => {
+  const key = show.title?.toLowerCase() ?? ""
+  return key === "ozark" || key === "orange is the new black"
+}
+
 const Header = ({ onSearch }: { onSearch: () => void }) => {
   const [scrolled, setScrolled] = useState(false)
 
@@ -76,7 +96,7 @@ const Header = ({ onSearch }: { onSearch: () => void }) => {
     >
       <div className="mx-auto flex w-full max-w-[1400px] items-center gap-6 pt-4 text-sm font-medium text-neutral-200">
         <div className="flex items-center gap-8">
-          <img src="/netflix-logo.svg" alt="Netflix" className="h-6 md:h-8" />
+          <img src={NETFLIX_LOGO} alt="Netflix" className="h-6 w-auto md:h-6" />
           <nav className="hidden items-center gap-6 text-[0.95rem] md:flex">
             {NAV_LINKS.map((link) => (
               <a key={link} href="#" className="transition hover:text-white">
@@ -116,6 +136,10 @@ const Header = ({ onSearch }: { onSearch: () => void }) => {
 
 export default function App() {
   const [isChatOpen, setIsChatOpen] = useState(false)
+  const [playerState, setPlayerState] = useState<{
+    show: Show | null
+    clip?: string | null
+  }>({ show: null, clip: null })
   const {
     data: shows = [],
     isLoading,
@@ -187,6 +211,12 @@ export default function App() {
     staleTime: 1000 * 60 * 60,
   })
 
+  const launchPlayer = (show: Show, clip?: string | null) => {
+    setPlayerState({ show, clip })
+  }
+
+  const closePlayer = () => setPlayerState({ show: null, clip: null })
+
   const heroSection = isLoading ? (
     <HeroSkeleton />
   ) : error ? (
@@ -194,7 +224,13 @@ export default function App() {
       <ErrorState message={(error as Error).message} onRetry={refetch} />
     </div>
   ) : curated.length ? (
-    <HeroCarousel shows={curated} posters={posterMap} clips={heroClips} details={omdbDetails} />
+    <HeroCarousel
+      shows={curated}
+      posters={posterMap}
+      clips={heroClips}
+      details={omdbDetails}
+      onPlay={launchPlayer}
+    />
   ) : (
     <div className="mx-auto max-w-[1400px] px-6">
       <EmptyState />
@@ -244,6 +280,11 @@ export default function App() {
         ratingMap={ratingMap}
         posterMap={posterMap}
       />
+      <PlayerOverlay
+        state={playerState}
+        onClose={closePlayer}
+        fallback={(show) => getArtworkForShow(show, posterMap, "hero")}
+      />
     </div>
   )
 }
@@ -253,22 +294,27 @@ const HeroCarousel = ({
   posters,
   clips,
   details,
+  onPlay,
 }: {
   shows: Show[]
   posters: PosterMap
   clips: HeroClipMap
   details: OmdbDetailsMap
+  onPlay: (show: Show, clip?: string | null) => void
 }) => {
   const [current, setCurrent] = useState(0)
+  const [isAnimating, setIsAnimating] = useState(false)
 
   useEffect(() => {
     setCurrent(0)
+    setIsAnimating(false)
   }, [shows])
 
   useEffect(() => {
     if (shows.length <= 1) return
     const timer = setInterval(() => {
       setCurrent((prev) => (prev + 1) % shows.length)
+      setIsAnimating(false)
     }, HERO_INTERVAL)
     return () => clearInterval(timer)
   }, [shows])
@@ -283,17 +329,19 @@ const HeroCarousel = ({
     })
   }
 
-  const heroClip = clips[activeShow.id]
+  const heroClipData = clips[activeShow.id] || {}
+  const heroClip = heroClipData.secondary ?? heroClipData.primary ?? null
   const backgroundFallback = getArtworkForShow(activeShow, posters, "hero")
   const isVideo = heroClip ? /\.mp4($|\?)/i.test(heroClip) : false
 
   return (
-    <section className="relative h-[calc(100vh-70px)] min-h-[560px] w-full overflow-hidden">
+    <section className="relative h-[calc(100vh-70px)] min-h-[560px] w-full overflow-hidden bg-black">
       {heroClip ? (
         isVideo ? (
           <video
             key={heroClip}
-            className="absolute inset-0 h-full w-full object-cover"
+            className="absolute inset-0 h-full w-full object-cover transition-transform duration-700 ease-in-out"
+            style={{ transform: isAnimating ? "translateX(-10px)" : "translateX(0)" }}
             autoPlay
             loop
             muted
@@ -307,6 +355,7 @@ const HeroCarousel = ({
                   /* autoplay can fail silently */
                 })
               }
+              requestAnimationFrame(() => setIsAnimating(true))
             }}
           >
             <source src={heroClip} type="video/mp4" />
@@ -316,7 +365,9 @@ const HeroCarousel = ({
             key={heroClip}
             src={heroClip}
             alt={`${activeShow.title} clip`}
-            className="absolute inset-0 h-full w-full object-cover"
+            className="absolute inset-0 h-full w-full object-cover opacity-0 transition-all duration-700 ease-in-out"
+            style={{ transform: isAnimating ? "translateX(-10px)" : "translateX(0)", opacity: isAnimating ? 1 : 0 }}
+            onLoad={() => requestAnimationFrame(() => setIsAnimating(true))}
             loading="eager"
           />
         )
@@ -329,19 +380,38 @@ const HeroCarousel = ({
           fetchPriority="high"
         />
       )}
-      <div className="hero-gradient absolute inset-0" />
+      <div
+        className={cn(
+          "hero-gradient absolute inset-0 transition-opacity duration-700 ease-in-out",
+          isAnimating ? "opacity-100" : "opacity-0"
+        )}
+      />
 
       <div className="relative z-10 mx-auto flex h-full w-full max-w-[1400px] flex-col justify-end pb-24 pt-12">
         <div className="max-w-4xl space-y-4">
-          <img src="/netflix-logo.svg" alt="Netflix" className="h-10 md:h-12" />
-          <h1 className="text-5xl font-bold leading-tight tracking-tight drop-shadow-md md:text-6xl">
-            {activeShow.title}
-          </h1>
-          <p className="max-w-3xl text-lg text-neutral-100">{getHeroSummary(activeShow, details)}</p>
+          <img src={NETFLIX_LOGO} alt="Netflix" className="h-10 w-auto md:h-8" />
+          {resolveLogoFor(activeShow) ? (
+            <div className="inline-flex h-24 w-auto items-center md:h-20 pt-6">
+              <img
+                src={resolveLogoFor(activeShow)!}
+                alt={`${activeShow.title} logo`}
+                className={cn(
+                  "w-auto max-h-24 max-w-xl",
+                  needsExtraBrightness(activeShow) ? "brightness-200 invert grayscale contrast-200" : ""
+                )}
+              />
+            </div>
+          ) : (
+            <h1 className="text-3xl font-bold leading-tight tracking-tight drop-shadow-md md:text-6xl">
+              {activeShow.title}
+            </h1>
+          )}
+          <p className="max-w-5xl text-lg text-neutral-100">{getHeroSummary(activeShow, details)}</p>
           <div className="flex flex-wrap gap-3">
             <Button
               size="lg"
               className="gap-2 rounded bg-white px-6 text-base font-semibold text-black hover:bg-white/90"
+            onClick={() => onPlay(activeShow, heroClipData.primary ?? heroClip)}
             >
               <Play className="size-5 text-black" fill="currentColor" />
               Play
@@ -802,6 +872,125 @@ const ChatSidebar = ({
         )}
       </aside>
     </>
+  )
+}
+
+const PlayerOverlay = ({
+  state,
+  onClose,
+  fallback,
+}: {
+  state: { show: Show | null; clip?: string | null }
+  onClose: () => void
+  fallback: (show: Show) => string
+}) => {
+  const videoRef = useRef<HTMLVideoElement | null>(null)
+  const [isPlaying, setIsPlaying] = useState(true)
+  const [isVisible, setIsVisible] = useState(false)
+  const [isZoomed, setIsZoomed] = useState(false)
+
+  useEffect(() => {
+    if (state.show) {
+      setIsVisible(true)
+      const zoomTimer = setTimeout(() => setIsZoomed(true), 120)
+      return () => {
+        clearTimeout(zoomTimer)
+        setIsVisible(false)
+        setIsZoomed(false)
+      }
+    }
+  }, [state.show])
+
+  useEffect(() => {
+    if (state.show && videoRef.current && state.clip && /\.mp4/i.test(state.clip)) {
+      const video = videoRef.current
+      video.play().catch(() => setIsPlaying(false))
+    }
+  }, [state])
+
+  if (!state.show) return null
+
+  const clip = state.clip
+  const isVideo = clip ? /\.mp4($|\?)/i.test(clip) : false
+  const handleToggle = () => {
+    if (!videoRef.current) return
+    if (videoRef.current.paused) {
+      videoRef.current.play().catch(() => {})
+      setIsPlaying(true)
+    } else {
+      videoRef.current.pause()
+      setIsPlaying(false)
+    }
+  }
+
+  const handleClose = () => {
+    setIsVisible(false)
+    setIsZoomed(false)
+    setTimeout(onClose, 350)
+  }
+
+  return (
+    <div
+      className={cn(
+        "fixed inset-0 z-[60] flex bg-black transition-opacity duration-500 ease-out",
+        isVisible ? "opacity-100" : "opacity-0"
+      )}
+    >
+      <div
+        className={cn(
+          "relative h-full w-full transform transition-transform duration-700 ease-\\[cubic-bezier\\(0.22,1,0.36,1\\)\\]",
+          isZoomed ? "scale-100" : "scale-[1.02]"
+        )}
+      >
+        <div className="absolute inset-0">
+          {clip ? (
+            isVideo ? (
+              <video
+                ref={videoRef}
+                src={clip}
+                className="h-full w-full object-cover"
+                autoPlay
+                loop
+                muted
+                poster={fallback(state.show)}
+              />
+            ) : (
+              <img src={clip} alt={state.show.title} className="h-full w-full object-cover" />
+            )
+          ) : (
+            <img src={fallback(state.show)} alt={state.show.title} className="h-full w-full object-cover" />
+          )}
+        </div>
+        <div className="relative z-10 flex h-full flex-col justify-between bg-gradient-to-t from-black/80 via-black/30 to-transparent">
+          <div className="flex items-center justify-between px-6 pt-6 text-white">
+            <button className="flex items-center gap-2 text-lg font-semibold" onClick={handleClose}>
+              <ArrowLeft className="size-6" />
+              <span>Back</span>
+            </button>
+            <div className="flex gap-4 text-xl text-white/70">
+              <Volume2 className="size-5" />
+            </div>
+          </div>
+          <div className="px-6 pb-6">
+            <div className="mb-4 h-1 w-full rounded-full bg-white/20">
+              <div className="h-full w-1/4 rounded-full bg-red-600" />
+            </div>
+            <div className="flex items-center gap-4 text-white">
+              <button
+                className="flex h-12 w-12 items-center justify-center rounded-full bg-white text-black"
+                onClick={handleToggle}
+              >
+                {isPlaying ? <Pause className="size-6" /> : <Play className="size-6" fill="currentColor" />}
+              </button>
+              <div>
+                <p className="text-sm uppercase tracking-[0.3em] text-white/60">Now Playing</p>
+                <p className="text-2xl font-semibold">{state.show.title}</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
   )
 }
 

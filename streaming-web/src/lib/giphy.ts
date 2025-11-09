@@ -14,7 +14,12 @@ type GiphyResponse = {
   }>
 }
 
-export type HeroClipMap = Record<number, string>
+export type HeroClip = {
+  primary?: string | null
+  secondary?: string | null
+}
+
+export type HeroClipMap = Record<number, HeroClip>
 
 export async function fetchHeroClips(shows: Show[], apiKey?: string) {
   const trimmedKey = apiKey?.trim()
@@ -26,8 +31,8 @@ export async function fetchHeroClips(shows: Show[], apiKey?: string) {
 
   await Promise.all(
     shows.map(async (show) => {
-      const clip = await fetchClip(show.title, trimmedKey)
-      if (clip) {
+      const clip = await fetchClipPair(show.title, trimmedKey)
+      if (clip.primary || clip.secondary) {
         results[show.id] = clip
       }
     })
@@ -36,11 +41,11 @@ export async function fetchHeroClips(shows: Show[], apiKey?: string) {
   return results
 }
 
-async function fetchClip(title: string, apiKey: string) {
+async function fetchClipPair(title: string, apiKey: string): Promise<HeroClip> {
   const params = new URLSearchParams({
     api_key: apiKey,
     q: title,
-    limit: "1",
+    limit: "2",
     rating: "pg-13",
     lang: "en",
   })
@@ -48,20 +53,24 @@ async function fetchClip(title: string, apiKey: string) {
   const response = await fetch(`${GIPHY_SEARCH_ENDPOINT}?${params.toString()}`)
   if (!response.ok) {
     console.warn(`Giphy request failed for ${title}: ${response.status}`)
-    return null
+    return { primary: null, secondary: null }
   }
 
   const body = (await response.json()) as GiphyResponse
   const first = body.data?.[0]
-  if (!first) {
-    return null
-  }
+  const second = body.data?.[1]
 
-  return (
-    first.images?.original_mp4?.mp4 ??
-    first.images?.preview_mp4?.mp4 ??
-    first.images?.downsized_large?.url ??
-    first.images?.original?.url ??
-    null
-  )
+  const select = (gif?: GiphyResponse["data"][number]) =>
+    gif
+      ? gif.images?.original_mp4?.mp4 ??
+        gif.images?.preview_mp4?.mp4 ??
+        gif.images?.downsized_large?.url ??
+        gif.images?.original?.url ??
+        null
+      : null
+
+  return {
+    primary: select(first),
+    secondary: select(second),
+  }
 }
