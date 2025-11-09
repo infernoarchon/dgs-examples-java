@@ -31,6 +31,7 @@ const HERO_INTERVAL = 5500
 const NAV_LINKS = ["Home", "Shows", "Movies", "New & Popular", "My List", "Browse by Languages"]
 type PosterMap = Record<number, string>
 type RatingMap = Record<number, { avg: number; count: number }>
+type Recommendation = { title: string; reason: string }
 
 const buildFallbackArtworkUrl = (show: Show, variant: "hero" | "tile" = "hero") => {
   const seed = encodeURIComponent(show.title.toLowerCase().replace(/\s+/g, "-"))
@@ -75,7 +76,7 @@ const Header = ({ onSearch }: { onSearch: () => void }) => {
     >
       <div className="mx-auto flex w-full max-w-[1400px] items-center gap-6 pt-4 text-sm font-medium text-neutral-200">
         <div className="flex items-center gap-8">
-          <span className="text-3xl font-bold text-[#e50914]">NETFLIX</span>
+          <img src="/netflix-logo.svg" alt="Netflix" className="h-6 md:h-8" />
           <nav className="hidden items-center gap-6 text-[0.95rem] md:flex">
             {NAV_LINKS.map((link) => (
               <a key={link} href="#" className="transition hover:text-white">
@@ -241,6 +242,7 @@ export default function App() {
         onClose={() => setIsChatOpen(false)}
         shows={shows}
         ratingMap={ratingMap}
+        posterMap={posterMap}
       />
     </div>
   )
@@ -329,11 +331,9 @@ const HeroCarousel = ({
       )}
       <div className="hero-gradient absolute inset-0" />
 
-      <div className="relative z-10 mx-auto flex h-full w-full max-w-[1400px] flex-col justify-end px-6 pb-24 pt-12 md:px-10">
+      <div className="relative z-10 mx-auto flex h-full w-full max-w-[1400px] flex-col justify-end pb-24 pt-12">
         <div className="max-w-4xl space-y-4">
-          <div className="flex items-center gap-3 text-3xl font-semibold uppercase text-[#e50914]">
-            Netflix
-          </div>
+          <img src="/netflix-logo.svg" alt="Netflix" className="h-10 md:h-12" />
           <h1 className="text-5xl font-bold leading-tight tracking-tight drop-shadow-md md:text-6xl">
             {activeShow.title}
           </h1>
@@ -525,6 +525,7 @@ const RatingStars = ({ value }: { value: number }) => {
 type ChatMessage = {
   role: "user" | "assistant"
   content: string
+  recommendations?: Recommendation[]
 }
 
 const ChatSidebar = ({
@@ -532,11 +533,13 @@ const ChatSidebar = ({
   onClose,
   shows,
   ratingMap,
+  posterMap,
 }: {
   open: boolean
   onClose: () => void
   shows: Show[]
   ratingMap: RatingMap
+  posterMap: PosterMap
 }) => {
   const [messages, setMessages] = useState<ChatMessage[]>([
     {
@@ -565,9 +568,13 @@ const ChatSidebar = ({
         title: show.title,
         releaseYear: show.releaseYear,
         avgRating: ratingMap[show.id]?.avg ?? null,
+        poster: posterMap[show.id] ?? null,
       })),
-    [shows, ratingMap]
+    [shows, ratingMap, posterMap]
   )
+
+  const findShowByTitle = (title: string) =>
+    shows.find((show) => show.title.toLowerCase() === title.toLowerCase())
 
   const handleSend = async () => {
     if (!input.trim() || !openAiKey) return
@@ -579,7 +586,7 @@ const ChatSidebar = ({
     const prompt = [
       "You are a streaming concierge for the Netflix DGS sample app.",
       "Recommend shows strictly from the provided catalog JSON.",
-      "List up to three titles, briefly summarizing why they match the user criteria.",
+      "Return JSON matching {\"summary\": string, \"recommendations\": [{\"title\": string, \"reason\": string}]} with at most 3 items.",
       "Catalog:",
       JSON.stringify(showContext),
       `User request: ${userMessage.content}`,
@@ -604,9 +611,34 @@ const ChatSidebar = ({
         ).join("") ??
         data?.output_text ??
         data?.choices?.[0]?.message?.content ??
-        "I couldn't generate a recommendation right now."
+        "{}"
 
-      setMessages((prev) => [...prev, { role: "assistant", content: textFromOutput.trim() }])
+      const cleaned = textFromOutput.trim().replace(/^```json\s*/i, "").replace(/```$/i, "")
+      let parsed: { summary?: string; recommendations?: Recommendation[] } | null = null
+      try {
+        parsed = JSON.parse(cleaned)
+      } catch {
+        parsed = null
+      }
+
+      if (parsed?.recommendations?.length) {
+        setMessages((prev) => [
+          ...prev,
+          {
+            role: "assistant",
+            content: parsed.summary?.trim() || "Here are a few titles you might love:",
+            recommendations: parsed.recommendations,
+          },
+        ])
+      } else {
+        setMessages((prev) => [
+          ...prev,
+          {
+            role: "assistant",
+            content: textFromOutput.trim() || "I couldn't generate a recommendation right now.",
+          },
+        ])
+      }
     } catch (error) {
       console.error("Chat error", error)
       setMessages((prev) => [
@@ -667,6 +699,10 @@ const ChatSidebar = ({
             <div className="flex-1 space-y-4 overflow-y-auto px-5 py-4">
               {messages.map((message, index) => {
                 const isAssistant = message.role === "assistant"
+                const recs = message.recommendations?.map((rec) => ({
+                  rec,
+                  show: findShowByTitle(rec.title),
+                }))
                 return (
                   <div
                     key={`${message.role}-${index}`}
@@ -675,8 +711,9 @@ const ChatSidebar = ({
                       isAssistant ? "bg-white/5 text-white" : "bg-[#e50914] text-white ml-auto"
                     )}
                   >
-                    <div className="space-y-2 text-sm [&_code]:rounded [&_code]:bg-white/10 [&_code]:px-1.5 [&_code]:py-0.5 [&_code]:text-xs [&_strong]:font-semibold">
-                      <ReactMarkdown
+                    {message.content && (
+                      <div className="space-y-2 text-sm [&_code]:rounded [&_code]:bg-white/10 [&_code]:px-1.5 [&_code]:py-0.5 [&_code]:text-xs [&_strong]:font-semibold">
+                        <ReactMarkdown
                         remarkPlugins={[remarkGfm]}
                         components={{
                           p: ({ children }) => <p className="text-sm leading-relaxed">{children}</p>,
@@ -690,10 +727,44 @@ const ChatSidebar = ({
                             <li className="text-sm leading-relaxed">{children}</li>
                           ),
                         }}
-                      >
-                        {message.content}
-                      </ReactMarkdown>
-                    </div>
+                        >
+                          {message.content}
+                        </ReactMarkdown>
+                      </div>
+                    )}
+                    {recs && recs.length ? (
+                      <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                        {recs.map(({ rec, show }) => (
+                          <div
+                            key={`${rec.title}-${rec.reason}`}
+                            className="rounded-xl border border-white/15 bg-black/40 p-3"
+                          >
+                            <div className="relative aspect-video overflow-hidden rounded-lg">
+                              <img
+                                src={
+                                  show && posterMap[show.id]
+                                    ? posterMap[show.id]
+                                    : buildFallbackArtworkUrl(
+                                        { title: rec.title } as Show,
+                                        "tile"
+                                      )
+                                }
+                                alt={`${rec.title} artwork`}
+                                className="h-full w-full object-cover"
+                              />
+                            </div>
+                            <h4 className="mt-3 text-base font-semibold">{rec.title}</h4>
+                            <p className="text-sm text-neutral-300">{rec.reason}</p>
+                            {show && ratingMap[show.id]?.avg ? (
+                              <div className="mt-2 flex items-center gap-2 text-xs text-neutral-400">
+                                <RatingStars value={ratingMap[show.id].avg} />
+                                <span>{ratingMap[show.id].avg.toFixed(1)}/5</span>
+                              </div>
+                            ) : null}
+                          </div>
+                        ))}
+                      </div>
+                    ) : null}
                   </div>
                 )
               })}
