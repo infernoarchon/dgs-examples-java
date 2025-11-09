@@ -50,3 +50,45 @@ Run the application in an IDE using its [main class](https://github.com/Netflix/
 ```
 
 Interact with the application using GraphiQL on http://localhost:8080/graphiql.
+
+Streaming web UI
+----------------
+
+A standalone Vite + React + shadcn/Tailwind experience lives in `streaming-web`. It
+consumes the same `/graphql` endpoint and renders a desktop-style streaming homepage
+with a hero carousel plus a horizontal content rail that mirrors the shows exposed
+by the Java service.
+
+1. Start the GraphQL server (see above) so `/graphql` is available on port 8080.
+2. In another terminal run:
+   ```
+   cd streaming-web
+   npm install          # first run only
+   npm run dev
+   ```
+3. Visit http://localhost:5173 to interact with the UI. The dev server proxies
+   `/graphql` to `http://localhost:8080/graphql`, so no extra CORS setup is needed.
+4. (Optional) To stream real key art instead of placeholders, request a free OMDb
+   API key (http://www.omdbapi.com/apikey.aspx) and create a `streaming-web/.env.local`
+   file that contains:
+   ```
+   VITE_OMDB_API_KEY=<your key>
+   ```
+   Restart `npm run dev` so the client picks up the new environment variable.
+5. (Optional) To match Netflix’s autoplay hero behavior, add a Giphy API key
+   (https://developers.giphy.com/dashboard/?create=true) to the same `.env.local` file:
+   ```
+   VITE_GIPHY_API_KEY=<your key>
+   ```
+   When present, the hero carousel swaps static art for looping clips sourced from Giphy.
+6. (Optional) Enable the AI “Ask Netflix” sidebar by adding an OpenAI API key with access
+   to the `gpt-5-nano` model:
+   ```
+   VITE_OPENAI_API_KEY=<your key>
+   ```
+   Clicking the search icon then slides in a chatbot that recommends titles based on the
+   shows served by the GraphQL API.
+
+For production you can point the client at a different backend by defining
+`VITE_GRAPHQL_URL` before building (`npm run build`) and serving the static assets
+behind any HTTP server.

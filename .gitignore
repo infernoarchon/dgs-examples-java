@@ -1,6 +1,10 @@
 HELP.md
 .gradle
 build/
+node_modules/
+**/node_modules/
+**/dist/
+streaming-web/.env*
 !gradle/wrapper/gradle-wrapper.jar
 !**/src/main/**/build/
 !**/src/test/**/build/

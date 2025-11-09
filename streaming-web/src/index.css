@@ -1,0 +1,53 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 222 52% 2%;
+    --foreground: 210 40% 98%;
+
+    --muted: 217 32% 17%;
+    --muted-foreground: 214 32% 74%;
+
+    --popover: 222 52% 2%;
+    --popover-foreground: 210 40% 98%;
+
+    --card: 222 52% 3%;
+    --card-foreground: 210 40% 98%;
+
+    --border: 217 32% 12%;
+    --input: 217 32% 12%;
+
+    --primary: 0 84% 60%;
+    --primary-foreground: 210 40% 98%;
+
+    --secondary: 214 32% 20%;
+    --secondary-foreground: 210 40% 98%;
+
+    --accent: 215 28% 35%;
+    --accent-foreground: 210 40% 98%;
+
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 210 40% 98%;
+
+    --ring: 212 33% 89%;
+    --radius: 0.5rem;
+  }
+
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground font-sans antialiased;
+  }
+}
+
+@layer components {
+  .hero-gradient {
+    background:
+      linear-gradient(180deg, rgba(0, 0, 0, 0) 40%, rgba(0, 0, 0, 0.85) 85%, rgba(0, 0, 0, 1) 100%),
+      linear-gradient(90deg, rgba(0, 0, 0, 0.75) 0%, rgba(0, 0, 0, 0.1) 60%);
+  }
+}
