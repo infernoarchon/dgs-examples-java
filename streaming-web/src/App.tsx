@@ -279,6 +279,8 @@ export default function App() {
         shows={shows}
         ratingMap={ratingMap}
         posterMap={posterMap}
+        clips={heroClips}
+        onLaunchPlayer={(show, clip) => launchPlayer(show, clip)}
       />
       <PlayerOverlay
         state={playerState}
@@ -313,8 +315,10 @@ const HeroCarousel = ({
   useEffect(() => {
     if (shows.length <= 1) return
     const timer = setInterval(() => {
-      setCurrent((prev) => (prev + 1) % shows.length)
       setIsAnimating(false)
+      requestAnimationFrame(() => {
+        setCurrent((prev) => (prev + 1) % shows.length)
+      })
     }, HERO_INTERVAL)
     return () => clearInterval(timer)
   }, [shows])
@@ -323,9 +327,12 @@ const HeroCarousel = ({
   if (!activeShow) return null
 
   const goTo = (offset: number) => {
-    setCurrent((prev) => {
-      const next = (prev + offset + shows.length) % shows.length
-      return next
+    setIsAnimating(false)
+    requestAnimationFrame(() => {
+      setCurrent((prev) => {
+        const next = (prev + offset + shows.length) % shows.length
+        return next
+      })
     })
   }
 
@@ -336,59 +343,70 @@ const HeroCarousel = ({
 
   return (
     <section className="relative h-[calc(100vh-70px)] min-h-[560px] w-full overflow-hidden bg-black">
-      {heroClip ? (
-        isVideo ? (
-          <video
-            key={heroClip}
-            className="absolute inset-0 h-full w-full object-cover transition-transform duration-700 ease-in-out"
-            style={{ transform: isAnimating ? "translateX(-10px)" : "translateX(0)" }}
-            autoPlay
-            loop
-            muted
-            playsInline
-            poster={backgroundFallback}
-            preload="auto"
-            onCanPlay={(event) => {
-              const video = event.currentTarget
-              if (video.paused) {
-                void video.play().catch(() => {
-                  /* autoplay can fail silently */
-                })
-              }
-              requestAnimationFrame(() => setIsAnimating(true))
-            }}
-          >
-            <source src={heroClip} type="video/mp4" />
-          </video>
+      <div className="absolute inset-0">
+        {heroClip ? (
+          isVideo ? (
+            <video
+              key={heroClip}
+              className={cn(
+                "h-full w-full object-cover transition duration-700 ease-in-out",
+                isAnimating ? "opacity-100 translate-x-0" : "opacity-0 translate-x-3"
+              )}
+              autoPlay
+              loop
+              muted
+              playsInline
+              poster={backgroundFallback}
+              preload="auto"
+              onCanPlay={(event) => {
+                const video = event.currentTarget
+                if (video.paused) {
+                  void video.play().catch(() => {
+                    /* autoplay can fail silently */
+                  })
+                }
+                requestAnimationFrame(() => setIsAnimating(true))
+              }}
+            >
+              <source src={heroClip} type="video/mp4" />
+            </video>
+          ) : (
+            <img
+              key={heroClip}
+              src={heroClip}
+              alt={`${activeShow.title} clip`}
+              className={cn(
+                "h-full w-full object-cover transition duration-700 ease-in-out",
+                isAnimating ? "opacity-100 translate-x-0" : "opacity-0 translate-x-3"
+              )}
+              onLoad={() => requestAnimationFrame(() => setIsAnimating(true))}
+              loading="eager"
+            />
+          )
         ) : (
           <img
-            key={heroClip}
-            src={heroClip}
-            alt={`${activeShow.title} clip`}
-            className="absolute inset-0 h-full w-full object-cover opacity-0 transition-all duration-700 ease-in-out"
-            style={{ transform: isAnimating ? "translateX(-10px)" : "translateX(0)", opacity: isAnimating ? 1 : 0 }}
-            onLoad={() => requestAnimationFrame(() => setIsAnimating(true))}
+            src={backgroundFallback}
+            alt={`${activeShow.title} artwork`}
+            className="h-full w-full object-cover"
             loading="eager"
+            fetchPriority="high"
           />
-        )
-      ) : (
-        <img
-          src={backgroundFallback}
-          alt={`${activeShow.title} artwork`}
-          className="absolute inset-0 h-full w-full object-cover"
-          loading="eager"
-          fetchPriority="high"
-        />
-      )}
+        )}
+      </div>
       <div
         className={cn(
-          "hero-gradient absolute inset-0 transition-opacity duration-700 ease-in-out",
-          isAnimating ? "opacity-100" : "opacity-0"
+          "hero-gradient absolute inset-0 transition duration-700 ease-in-out",
+          isAnimating ? "opacity-100 translate-x-0" : "opacity-0 translate-x-2"
         )}
       />
 
-      <div className="relative z-10 mx-auto flex h-full w-full max-w-[1400px] flex-col justify-end pb-24 pt-12">
-        <div className="max-w-4xl space-y-4">
+      <div
+        className={cn(
+          "relative z-10 mx-auto flex h-full w-full max-w-[1400px] flex-col justify-end pb-24 pt-12 transition duration-700 ease-in-out",
+          isAnimating ? "translate-x-0 opacity-100" : "translate-x-3 opacity-0"
+        )}
+      >
+        <div className="max-w-4xl space-y-4 transition duration-700 ease-in-out">
           <img src={NETFLIX_LOGO} alt="Netflix" className="h-10 w-auto md:h-8" />
           {resolveLogoFor(activeShow) ? (
             <div className="inline-flex h-24 w-auto items-center md:h-20 pt-6">
@@ -407,7 +425,7 @@ const HeroCarousel = ({
             </h1>
           )}
           <p className="max-w-5xl text-lg text-neutral-100">{getHeroSummary(activeShow, details)}</p>
-          <div className="flex flex-wrap gap-3">
+          <div className="flex flex-wrap gap-3 transition duration-700 ease-in-out">
             <Button
               size="lg"
               className="gap-2 rounded bg-white px-6 text-base font-semibold text-black hover:bg-white/90"
@@ -427,7 +445,7 @@ const HeroCarousel = ({
           </div>
         </div>
 
-        <div className="mt-10 flex items-center justify-between text-sm text-neutral-100">
+        <div className="mt-10 flex items-center justify-between text-sm text-neutral-100 transition duration-700 ease-in-out">
           <div className="flex items-center gap-4">
             <span className="rounded border border-white/50 px-3 py-1 text-xs font-semibold">R</span>
             <span>{taglineFor(activeShow)}</span>
@@ -449,7 +467,10 @@ const HeroCarousel = ({
             <button
               key={show.id}
               aria-label={`Go to ${show.title}`}
-              onClick={() => setCurrent(index)}
+            onClick={() => {
+              setIsAnimating(false)
+              requestAnimationFrame(() => setCurrent(index))
+            }}
               className={cn(
                 "h-1 rounded-full transition-all",
                 index === current ? "w-12 bg-white" : "w-5 bg-white/40"
@@ -604,12 +625,16 @@ const ChatSidebar = ({
   shows,
   ratingMap,
   posterMap,
+  clips,
+  onLaunchPlayer,
 }: {
   open: boolean
   onClose: () => void
   shows: Show[]
   ratingMap: RatingMap
   posterMap: PosterMap
+  clips: HeroClipMap
+  onLaunchPlayer: (show: Show, clip?: string | null) => void
 }) => {
   const [messages, setMessages] = useState<ChatMessage[]>([
     {
@@ -769,10 +794,12 @@ const ChatSidebar = ({
             <div className="flex-1 space-y-4 overflow-y-auto px-5 py-4">
               {messages.map((message, index) => {
                 const isAssistant = message.role === "assistant"
-                const recs = message.recommendations?.map((rec) => ({
-                  rec,
-                  show: findShowByTitle(rec.title),
-                }))
+                const recs = message.recommendations?.map((rec) => {
+                  const show = findShowByTitle(rec.title)
+                  const clip =
+                    show ? clips[show.id]?.primary ?? clips[show.id]?.secondary ?? null : null
+                  return { rec, show, clip }
+                })
                 return (
                   <div
                     key={`${message.role}-${index}`}
@@ -803,11 +830,11 @@ const ChatSidebar = ({
                       </div>
                     )}
                     {recs && recs.length ? (
-                      <div className="mt-4 grid gap-3 sm:grid-cols-2">
-                        {recs.map(({ rec, show }) => (
+                      <div className="mt-4 space-y-3">
+                        {recs.map(({ rec, show, clip }) => (
                           <div
                             key={`${rec.title}-${rec.reason}`}
-                            className="rounded-xl border border-white/15 bg-black/40 p-3"
+                            className="rounded-xl border border-white/15 bg-black/40 p-4"
                           >
                             <div className="relative aspect-video overflow-hidden rounded-lg">
                               <img
@@ -823,13 +850,23 @@ const ChatSidebar = ({
                                 className="h-full w-full object-cover"
                               />
                             </div>
-                            <h4 className="mt-3 text-base font-semibold">{rec.title}</h4>
-                            <p className="text-sm text-neutral-300">{rec.reason}</p>
                             {show && ratingMap[show.id]?.avg ? (
-                              <div className="mt-2 flex items-center gap-2 text-xs text-neutral-400">
+                              <div className="mt-3 flex items-center gap-2 text-xs text-neutral-400">
                                 <RatingStars value={ratingMap[show.id].avg} />
                                 <span>{ratingMap[show.id].avg.toFixed(1)}/5</span>
                               </div>
+                            ) : null}
+                            <h4 className="mt-2 text-lg font-semibold">{rec.title}</h4>
+                            <p className="text-sm text-neutral-300">{rec.reason}</p>
+                            {show ? (
+                              <button
+                                type="button"
+                                className="mt-4 flex w-full items-center justify-center gap-2 rounded-full bg-white/90 px-4 py-2 text-xs font-semibold uppercase tracking-widest text-black transition hover:bg-white"
+                                onClick={() => onLaunchPlayer(show, clip)}
+                              >
+                                <Play className="size-3" fill="currentColor" />
+                                Watch
+                              </button>
                             ) : null}
                           </div>
                         ))}
