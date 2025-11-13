@@ -31,7 +31,7 @@ export async function fetchHeroClips(shows: Show[], apiKey?: string) {
 
   await Promise.all(
     shows.map(async (show) => {
-      const searchQuery = show.giphyQuery ?? show.title
+      const searchQuery = `${show.giphyQuery ?? show.title} netflix`.trim()
       const clip = await fetchClipPair(searchQuery, trimmedKey)
       if (clip.primary || clip.secondary) {
         results[show.id] = clip
