@@ -1,12 +1,14 @@
-import { useEffect, useMemo, useState, type ComponentProps } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState, type ComponentProps } from "react"
 import { useQuery } from "@tanstack/react-query"
 import {
   ArrowLeft,
   ArrowRight,
   Bell,
+  Check,
   ChevronDown,
   Info,
   Play,
+  Plus,
   Search,
   Star,
   StarHalf,
@@ -14,6 +16,7 @@ import {
   Volume2,
   X,
   Loader2,
+  Pause,
 } from "lucide-react"
 import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
@@ -32,6 +35,22 @@ const NAV_LINKS = ["Home", "Shows", "Movies", "New & Popular", "My List", "Brows
 type PosterMap = Record<number, string>
 type RatingMap = Record<number, { avg: number; count: number }>
 type Recommendation = { title: string; reason: string }
+const MY_LIST_STORAGE_KEY = "dgs-my-list"
+
+const readStoredMyList = (): number[] => {
+  if (typeof window === "undefined") return []
+  try {
+    const raw = window.localStorage.getItem(MY_LIST_STORAGE_KEY)
+    if (!raw) return []
+    const parsed = JSON.parse(raw)
+    if (!Array.isArray(parsed)) return []
+    return parsed
+      .map((value) => (typeof value === "number" ? value : Number(value)))
+      .filter((value) => Number.isFinite(value))
+  } catch {
+    return []
+  }
+}
 
 const buildFallbackArtworkUrl = (show: Show, variant: "hero" | "tile" = "hero") => {
   const seed = encodeURIComponent(show.title.toLowerCase().replace(/\s+/g, "-"))
@@ -52,6 +71,25 @@ const taglineFor = (show: Show) =>
 
 const getHeroSummary = (show: Show, details: OmdbDetailsMap) =>
   details[show.id]?.plot ?? fallbackHeroDescription(show)
+
+const NETFLIX_LOGO = "/images/logos/netflix-logo.svg"
+const LOGO_MAP: Record<string, string> = {
+  "stranger things": "/images/logos/stranger-things-logo.svg",
+  "ozark": "/images/logos/ozark-logo.svg",
+  "the crown": "/images/logos/the-crown-logo.png",
+  "dead to me": "/images/logos/dead-to-me-logo.png",
+  "orange is the new black": "/images/logos/orange-is-the-new-black-logo.svg",
+}
+
+const resolveLogoFor = (show: Show) => {
+  const key = show.title?.toLowerCase()
+  return key ? LOGO_MAP[key] ?? null : null
+}
+
+const needsExtraBrightness = (show: Show) => {
+  const key = show.title?.toLowerCase() ?? ""
+  return key === "ozark" || key === "orange is the new black"
+}
 
 const Header = ({ onSearch }: { onSearch: () => void }) => {
   const [scrolled, setScrolled] = useState(false)
@@ -76,7 +114,7 @@ const Header = ({ onSearch }: { onSearch: () => void }) => {
     >
       <div className="mx-auto flex w-full max-w-[1400px] items-center gap-6 pt-4 text-sm font-medium text-neutral-200">
         <div className="flex items-center gap-8">
-          <img src="/netflix-logo.svg" alt="Netflix" className="h-6 md:h-8" />
+          <img src={NETFLIX_LOGO} alt="Netflix" className="h-6 w-auto md:h-6" />
           <nav className="hidden items-center gap-6 text-[0.95rem] md:flex">
             {NAV_LINKS.map((link) => (
               <a key={link} href="#" className="transition hover:text-white">
@@ -116,6 +154,22 @@ const Header = ({ onSearch }: { onSearch: () => void }) => {
 
 export default function App() {
   const [isChatOpen, setIsChatOpen] = useState(false)
+  const [playerState, setPlayerState] = useState<{
+    show: Show | null
+    clip?: string | null
+  }>({ show: null, clip: null })
+  const [myListIds, setMyListIds] = useState<number[]>(() => readStoredMyList())
+
+  useEffect(() => {
+    if (typeof window === "undefined") return
+    setMyListIds(readStoredMyList())
+  }, [])
+
+  useEffect(() => {
+    if (typeof window === "undefined") return
+    window.localStorage.setItem(MY_LIST_STORAGE_KEY, JSON.stringify(myListIds))
+  }, [myListIds])
+
   const {
     data: shows = [],
     isLoading,
@@ -128,6 +182,22 @@ export default function App() {
   })
 
   const curated = useMemo(() => shows.slice(0, 5), [shows])
+  const toggleMyList = useCallback((showId: number) => {
+    setMyListIds((prev) => (prev.includes(showId) ? prev.filter((id) => id !== showId) : [...prev, showId]))
+  }, [])
+  const isInMyList = useCallback((showId: number) => myListIds.includes(showId), [myListIds])
+  const toggleMyListForShow = useCallback(
+    (show: Show) => {
+      toggleMyList(show.id)
+    },
+    [toggleMyList]
+  )
+  const myListShows = useMemo(() => {
+    const showById = new Map(shows.map((show) => [show.id, show]))
+    return myListIds
+      .map((id) => showById.get(id))
+      .filter((show): show is Show => Boolean(show))
+  }, [myListIds, shows])
 
   const ratingMap = useMemo<RatingMap>(() => {
     const map: RatingMap = {}
@@ -187,6 +257,12 @@ export default function App() {
     staleTime: 1000 * 60 * 60,
   })
 
+  const launchPlayer = (show: Show, clip?: string | null) => {
+    setPlayerState({ show, clip })
+  }
+
+  const closePlayer = () => setPlayerState({ show: null, clip: null })
+
   const heroSection = isLoading ? (
     <HeroSkeleton />
   ) : error ? (
@@ -194,7 +270,15 @@ export default function App() {
       <ErrorState message={(error as Error).message} onRetry={refetch} />
     </div>
   ) : curated.length ? (
-    <HeroCarousel shows={curated} posters={posterMap} clips={heroClips} details={omdbDetails} />
+    <HeroCarousel
+      shows={curated}
+      posters={posterMap}
+      clips={heroClips}
+      details={omdbDetails}
+      onPlay={launchPlayer}
+      onToggleMyList={toggleMyListForShow}
+      isInMyList={isInMyList}
+    />
   ) : (
     <div className="mx-auto max-w-[1400px] px-6">
       <EmptyState />
@@ -227,12 +311,22 @@ export default function App() {
               shows={topRated}
               posters={posterMap}
               ratingMap={ratingMap}
+              onToggleMyList={toggleMyListForShow}
+              isInMyList={isInMyList}
             />
             <ContentRow
               title="Trending Now"
               shows={[...shows].reverse()}
               posters={posterMap}
               accentBadge="Top 10"
+              onToggleMyList={toggleMyListForShow}
+              isInMyList={isInMyList}
+            />
+            <MyListTray
+              shows={myListShows}
+              posters={posterMap}
+              ratingMap={ratingMap}
+              onToggleMyList={toggleMyListForShow}
             />
           </>
         )}
@@ -243,6 +337,15 @@ export default function App() {
         shows={shows}
         ratingMap={ratingMap}
         posterMap={posterMap}
+        clips={heroClips}
+        onLaunchPlayer={(show, clip) => launchPlayer(show, clip)}
+        onToggleMyList={toggleMyListForShow}
+        isInMyList={isInMyList}
+      />
+      <PlayerOverlay
+        state={playerState}
+        onClose={closePlayer}
+        fallback={(show) => getArtworkForShow(show, posterMap, "hero")}
       />
     </div>
   )
@@ -253,22 +356,33 @@ const HeroCarousel = ({
   posters,
   clips,
   details,
+  onPlay,
+  onToggleMyList,
+  isInMyList,
 }: {
   shows: Show[]
   posters: PosterMap
   clips: HeroClipMap
   details: OmdbDetailsMap
+  onPlay: (show: Show, clip?: string | null) => void
+  onToggleMyList?: (show: Show) => void
+  isInMyList?: (showId: number) => boolean
 }) => {
   const [current, setCurrent] = useState(0)
+  const [isAnimating, setIsAnimating] = useState(false)
 
   useEffect(() => {
     setCurrent(0)
+    setIsAnimating(false)
   }, [shows])
 
   useEffect(() => {
     if (shows.length <= 1) return
     const timer = setInterval(() => {
-      setCurrent((prev) => (prev + 1) % shows.length)
+      setIsAnimating(false)
+      requestAnimationFrame(() => {
+        setCurrent((prev) => (prev + 1) % shows.length)
+      })
     }, HERO_INTERVAL)
     return () => clearInterval(timer)
   }, [shows])
@@ -277,75 +391,128 @@ const HeroCarousel = ({
   if (!activeShow) return null
 
   const goTo = (offset: number) => {
-    setCurrent((prev) => {
-      const next = (prev + offset + shows.length) % shows.length
-      return next
+    setIsAnimating(false)
+    requestAnimationFrame(() => {
+      setCurrent((prev) => {
+        const next = (prev + offset + shows.length) % shows.length
+        return next
+      })
     })
   }
 
-  const heroClip = clips[activeShow.id]
+  const heroClipData = clips[activeShow.id] || {}
+  const heroClip = heroClipData.secondary ?? heroClipData.primary ?? null
   const backgroundFallback = getArtworkForShow(activeShow, posters, "hero")
   const isVideo = heroClip ? /\.mp4($|\?)/i.test(heroClip) : false
+  const savedToList = isInMyList?.(activeShow.id) ?? false
 
   return (
-    <section className="relative h-[calc(100vh-70px)] min-h-[560px] w-full overflow-hidden">
-      {heroClip ? (
-        isVideo ? (
-          <video
-            key={heroClip}
-            className="absolute inset-0 h-full w-full object-cover"
-            autoPlay
-            loop
-            muted
-            playsInline
-            poster={backgroundFallback}
-            preload="auto"
-            onCanPlay={(event) => {
-              const video = event.currentTarget
-              if (video.paused) {
-                void video.play().catch(() => {
-                  /* autoplay can fail silently */
-                })
-              }
-            }}
-          >
-            <source src={heroClip} type="video/mp4" />
-          </video>
+    <section className="relative h-[calc(100vh-70px)] min-h-[560px] w-full overflow-hidden bg-black">
+      <div className="absolute inset-0">
+        {heroClip ? (
+          isVideo ? (
+            <video
+              key={heroClip}
+              className={cn(
+                "h-full w-full object-cover transition duration-700 ease-in-out",
+                isAnimating ? "opacity-100 translate-x-0" : "opacity-0 translate-x-3"
+              )}
+              autoPlay
+              loop
+              muted
+              playsInline
+              poster={backgroundFallback}
+              preload="auto"
+              onCanPlay={(event) => {
+                const video = event.currentTarget
+                if (video.paused) {
+                  void video.play().catch(() => {
+                    /* autoplay can fail silently */
+                  })
+                }
+                requestAnimationFrame(() => setIsAnimating(true))
+              }}
+            >
+              <source src={heroClip} type="video/mp4" />
+            </video>
+          ) : (
+            <img
+              key={heroClip}
+              src={heroClip}
+              alt={`${activeShow.title} clip`}
+              className={cn(
+                "h-full w-full object-cover transition duration-700 ease-in-out",
+                isAnimating ? "opacity-100 translate-x-0" : "opacity-0 translate-x-3"
+              )}
+              onLoad={() => requestAnimationFrame(() => setIsAnimating(true))}
+              loading="eager"
+            />
+          )
         ) : (
           <img
-            key={heroClip}
-            src={heroClip}
-            alt={`${activeShow.title} clip`}
-            className="absolute inset-0 h-full w-full object-cover"
+            src={backgroundFallback}
+            alt={`${activeShow.title} artwork`}
+            className="h-full w-full object-cover"
             loading="eager"
+            fetchPriority="high"
           />
-        )
-      ) : (
-        <img
-          src={backgroundFallback}
-          alt={`${activeShow.title} artwork`}
-          className="absolute inset-0 h-full w-full object-cover"
-          loading="eager"
-          fetchPriority="high"
-        />
-      )}
-      <div className="hero-gradient absolute inset-0" />
+        )}
+      </div>
+      <div
+        className={cn(
+          "hero-gradient absolute inset-0 transition duration-700 ease-in-out",
+          isAnimating ? "opacity-100 translate-x-0" : "opacity-0 translate-x-2"
+        )}
+      />
 
-      <div className="relative z-10 mx-auto flex h-full w-full max-w-[1400px] flex-col justify-end pb-24 pt-12">
-        <div className="max-w-4xl space-y-4">
-          <img src="/netflix-logo.svg" alt="Netflix" className="h-10 md:h-12" />
-          <h1 className="text-5xl font-bold leading-tight tracking-tight drop-shadow-md md:text-6xl">
-            {activeShow.title}
-          </h1>
-          <p className="max-w-3xl text-lg text-neutral-100">{getHeroSummary(activeShow, details)}</p>
-          <div className="flex flex-wrap gap-3">
+      <div
+        className={cn(
+          "relative z-10 mx-auto flex h-full w-full max-w-[1400px] flex-col justify-end pb-24 pt-12 transition duration-700 ease-in-out",
+          isAnimating ? "translate-x-0 opacity-100" : "translate-x-3 opacity-0"
+        )}
+      >
+        <div className="max-w-4xl space-y-4 transition duration-700 ease-in-out">
+          <img src={NETFLIX_LOGO} alt="Netflix" className="h-10 w-auto md:h-8" />
+          {resolveLogoFor(activeShow) ? (
+            <div className="inline-flex h-24 w-auto items-center md:h-20 pt-6">
+              <img
+                src={resolveLogoFor(activeShow)!}
+                alt={`${activeShow.title} logo`}
+                className={cn(
+                  "w-auto max-h-24 max-w-xl",
+                  needsExtraBrightness(activeShow) ? "brightness-200 invert grayscale contrast-200" : ""
+                )}
+              />
+            </div>
+          ) : (
+            <h1 className="text-3xl font-bold leading-tight tracking-tight drop-shadow-md md:text-6xl">
+              {activeShow.title}
+            </h1>
+          )}
+          <p className="max-w-5xl text-lg text-neutral-100">{getHeroSummary(activeShow, details)}</p>
+          <div className="flex flex-wrap gap-3 transition duration-700 ease-in-out">
             <Button
               size="lg"
               className="gap-2 rounded bg-white px-6 text-base font-semibold text-black hover:bg-white/90"
+              onClick={() => onPlay(activeShow, heroClipData.primary ?? heroClip)}
             >
               <Play className="size-5 text-black" fill="currentColor" />
               Play
             </Button>
+            {onToggleMyList && isInMyList ? (
+              <Button
+                size="lg"
+                variant="outline"
+                className={cn(
+                  "gap-2 rounded px-6 text-base font-semibold text-white transition",
+                  savedToList ? "bg-white/30 hover:bg-white/40" : "bg-white/20 hover:bg-white/30"
+                )}
+                onClick={() => onToggleMyList(activeShow)}
+              >
+                {savedToList ? <Check className="size-5" /> : <Plus className="size-5" />}
+                {savedToList ? "In My List" : "My List"}
+              </Button>
+            ) : null}
             <Button
               size="lg"
               variant="outline"
@@ -357,7 +524,7 @@ const HeroCarousel = ({
           </div>
         </div>
 
-        <div className="mt-10 flex items-center justify-between text-sm text-neutral-100">
+        <div className="mt-10 flex items-center justify-between text-sm text-neutral-100 transition duration-700 ease-in-out">
           <div className="flex items-center gap-4">
             <span className="rounded border border-white/50 px-3 py-1 text-xs font-semibold">R</span>
             <span>{taglineFor(activeShow)}</span>
@@ -379,7 +546,10 @@ const HeroCarousel = ({
             <button
               key={show.id}
               aria-label={`Go to ${show.title}`}
-              onClick={() => setCurrent(index)}
+            onClick={() => {
+              setIsAnimating(false)
+              requestAnimationFrame(() => setCurrent(index))
+            }}
               className={cn(
                 "h-1 rounded-full transition-all",
                 index === current ? "w-12 bg-white" : "w-5 bg-white/40"
@@ -398,12 +568,16 @@ const ContentRow = ({
   posters,
   accentBadge,
   ratingMap,
+  onToggleMyList,
+  isInMyList,
 }: {
   title: string
   shows: Show[]
   posters: PosterMap
   accentBadge?: string
   ratingMap?: RatingMap
+  onToggleMyList?: (show: Show) => void
+  isInMyList?: (showId: number) => boolean
 }) =>
   shows.length ? (
     <section className="space-y-4">
@@ -447,6 +621,70 @@ const ContentRow = ({
   ) : (
     <p className="text-sm text-muted-foreground">No shows yet — add one through the DGS backend.</p>
   )
+
+const MyListTray = ({
+  shows,
+  posters,
+  ratingMap,
+  onToggleMyList,
+}: {
+  shows: Show[]
+  posters: PosterMap
+  ratingMap: RatingMap
+  onToggleMyList: (show: Show) => void
+}) => (
+  <section className="rounded-3xl border border-white/10 bg-white/5 p-6 shadow-[0_15px_45px_rgba(0,0,0,0.4)]">
+    <div className="flex flex-wrap items-end justify-between gap-4">
+      <div>
+        <p className="text-xs uppercase tracking-[0.3em] text-neutral-400">Your Queue</p>
+        <h2 className="text-2xl font-semibold text-white">My List</h2>
+        <p className="text-sm text-neutral-400">Saved locally so you never lose a recommendation.</p>
+      </div>
+      {shows.length ? <span className="text-xs text-neutral-400">{shows.length} titles</span> : null}
+    </div>
+    {shows.length ? (
+      <div className="mt-6 flex gap-5 overflow-x-auto pb-2">
+        {shows.map((show) => (
+          <Card
+            key={`my-list-${show.id}`}
+            className="w-[260px] shrink-0 overflow-hidden border-none bg-black/40 text-left shadow-lg shadow-black/40"
+          >
+            <div className="relative aspect-video overflow-hidden">
+              <img
+                src={getArtworkForShow(show, posters, "tile")}
+                alt={`${show.title} poster`}
+                className="h-full w-full object-cover"
+                loading="lazy"
+              />
+            </div>
+            <CardContent className="space-y-2 px-4 py-4">
+              {ratingMap[show.id] ? (
+                <div className="flex items-center gap-2 text-xs text-neutral-400">
+                  <RatingStars value={ratingMap[show.id].avg} />
+                  <span>{ratingMap[show.id].avg.toFixed(1)} / 5</span>
+                </div>
+              ) : null}
+              <h3 className="text-lg font-semibold text-white">{show.title}</h3>
+              <p className="text-xs text-neutral-400">{taglineFor(show)}</p>
+              <button
+                type="button"
+                className="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-full border border-white/30 px-4 py-1.5 text-[0.65rem] font-semibold uppercase tracking-[0.3em] text-white transition hover:border-white"
+                onClick={() => onToggleMyList(show)}
+              >
+                <X className="size-3" />
+                Remove
+              </button>
+            </CardContent>
+          </Card>
+        ))}
+      </div>
+    ) : (
+      <div className="mt-6 rounded-2xl border border-dashed border-white/30 bg-black/30 p-6 text-sm text-neutral-300">
+        Use the My List buttons across the app (and inside the AI assistant) to pin titles here.
+      </div>
+    )}
+  </section>
+)
 
 const PosterStatusBanner = ({
   omdbKeyProvided,
@@ -534,12 +772,20 @@ const ChatSidebar = ({
   shows,
   ratingMap,
   posterMap,
+  clips,
+  onLaunchPlayer,
+  onToggleMyList,
+  isInMyList,
 }: {
   open: boolean
   onClose: () => void
   shows: Show[]
   ratingMap: RatingMap
   posterMap: PosterMap
+  clips: HeroClipMap
+  onLaunchPlayer: (show: Show, clip?: string | null) => void
+  onToggleMyList: (show: Show) => void
+  isInMyList: (showId: number) => boolean
 }) => {
   const [messages, setMessages] = useState<ChatMessage[]>([
     {
@@ -699,10 +945,12 @@ const ChatSidebar = ({
             <div className="flex-1 space-y-4 overflow-y-auto px-5 py-4">
               {messages.map((message, index) => {
                 const isAssistant = message.role === "assistant"
-                const recs = message.recommendations?.map((rec) => ({
-                  rec,
-                  show: findShowByTitle(rec.title),
-                }))
+                const recs = message.recommendations?.map((rec) => {
+                  const show = findShowByTitle(rec.title)
+                  const clip =
+                    show ? clips[show.id]?.primary ?? clips[show.id]?.secondary ?? null : null
+                  return { rec, show, clip }
+                })
                 return (
                   <div
                     key={`${message.role}-${index}`}
@@ -733,11 +981,11 @@ const ChatSidebar = ({
                       </div>
                     )}
                     {recs && recs.length ? (
-                      <div className="mt-4 grid gap-3 sm:grid-cols-2">
-                        {recs.map(({ rec, show }) => (
+                      <div className="mt-4 space-y-3">
+                        {recs.map(({ rec, show, clip }) => (
                           <div
                             key={`${rec.title}-${rec.reason}`}
-                            className="rounded-xl border border-white/15 bg-black/40 p-3"
+                            className="rounded-xl border border-white/15 bg-black/40 p-4"
                           >
                             <div className="relative aspect-video overflow-hidden rounded-lg">
                               <img
@@ -753,12 +1001,36 @@ const ChatSidebar = ({
                                 className="h-full w-full object-cover"
                               />
                             </div>
-                            <h4 className="mt-3 text-base font-semibold">{rec.title}</h4>
-                            <p className="text-sm text-neutral-300">{rec.reason}</p>
                             {show && ratingMap[show.id]?.avg ? (
-                              <div className="mt-2 flex items-center gap-2 text-xs text-neutral-400">
+                              <div className="mt-3 flex items-center gap-2 text-xs text-neutral-400">
                                 <RatingStars value={ratingMap[show.id].avg} />
                                 <span>{ratingMap[show.id].avg.toFixed(1)}/5</span>
+                              </div>
+                            ) : null}
+                            <h4 className="mt-2 text-lg font-semibold">{rec.title}</h4>
+                            <p className="text-sm text-neutral-300">{rec.reason}</p>
+                            {show ? (
+                              <div className="mt-4 space-y-2">
+                                <button
+                                  type="button"
+                                  className="flex w-full items-center justify-center gap-2 rounded-full bg-white/90 px-4 py-2 text-xs font-semibold uppercase tracking-widest text-black transition hover:bg-white"
+                                  onClick={() => onLaunchPlayer(show, clip)}
+                                >
+                                  <Play className="size-3" fill="currentColor" />
+                                  Watch
+                                </button>
+                                <button
+                                  type="button"
+                                  className="flex w-full items-center justify-center gap-2 rounded-full border border-white/20 px-4 py-2 text-xs font-semibold uppercase tracking-widest text-white/80 transition hover:border-white hover:text-white"
+                                  onClick={() => onToggleMyList(show)}
+                                >
+                                  {isInMyList(show.id) ? (
+                                    <Check className="size-3" />
+                                  ) : (
+                                    <Plus className="size-3" />
+                                  )}
+                                  {isInMyList(show.id) ? "In My List" : "Add to My List"}
+                                </button>
                               </div>
                             ) : null}
                           </div>
@@ -802,6 +1074,125 @@ const ChatSidebar = ({
         )}
       </aside>
     </>
+  )
+}
+
+const PlayerOverlay = ({
+  state,
+  onClose,
+  fallback,
+}: {
+  state: { show: Show | null; clip?: string | null }
+  onClose: () => void
+  fallback: (show: Show) => string
+}) => {
+  const videoRef = useRef<HTMLVideoElement | null>(null)
+  const [isPlaying, setIsPlaying] = useState(true)
+  const [isVisible, setIsVisible] = useState(false)
+  const [isZoomed, setIsZoomed] = useState(false)
+
+  useEffect(() => {
+    if (state.show) {
+      setIsVisible(true)
+      const zoomTimer = setTimeout(() => setIsZoomed(true), 120)
+      return () => {
+        clearTimeout(zoomTimer)
+        setIsVisible(false)
+        setIsZoomed(false)
+      }
+    }
+  }, [state.show])
+
+  useEffect(() => {
+    if (state.show && videoRef.current && state.clip && /\.mp4/i.test(state.clip)) {
+      const video = videoRef.current
+      video.play().catch(() => setIsPlaying(false))
+    }
+  }, [state])
+
+  if (!state.show) return null
+
+  const clip = state.clip
+  const isVideo = clip ? /\.mp4($|\?)/i.test(clip) : false
+  const handleToggle = () => {
+    if (!videoRef.current) return
+    if (videoRef.current.paused) {
+      videoRef.current.play().catch(() => {})
+      setIsPlaying(true)
+    } else {
+      videoRef.current.pause()
+      setIsPlaying(false)
+    }
+  }
+
+  const handleClose = () => {
+    setIsVisible(false)
+    setIsZoomed(false)
+    setTimeout(onClose, 350)
+  }
+
+  return (
+    <div
+      className={cn(
+        "fixed inset-0 z-[60] flex bg-black transition-opacity duration-500 ease-out",
+        isVisible ? "opacity-100" : "opacity-0"
+      )}
+    >
+      <div
+        className={cn(
+          "relative h-full w-full transform transition-transform duration-700 ease-\\[cubic-bezier\\(0.22,1,0.36,1\\)\\]",
+          isZoomed ? "scale-100" : "scale-[1.02]"
+        )}
+      >
+        <div className="absolute inset-0">
+          {clip ? (
+            isVideo ? (
+              <video
+                ref={videoRef}
+                src={clip}
+                className="h-full w-full object-cover"
+                autoPlay
+                loop
+                muted
+                poster={fallback(state.show)}
+              />
+            ) : (
+              <img src={clip} alt={state.show.title} className="h-full w-full object-cover" />
+            )
+          ) : (
+            <img src={fallback(state.show)} alt={state.show.title} className="h-full w-full object-cover" />
+          )}
+        </div>
+        <div className="relative z-10 flex h-full flex-col justify-between bg-gradient-to-t from-black/80 via-black/30 to-transparent">
+          <div className="flex items-center justify-between px-6 pt-6 text-white">
+            <button className="flex items-center gap-2 text-lg font-semibold" onClick={handleClose}>
+              <ArrowLeft className="size-6" />
+              <span>Back</span>
+            </button>
+            <div className="flex gap-4 text-xl text-white/70">
+              <Volume2 className="size-5" />
+            </div>
+          </div>
+          <div className="px-6 pb-6">
+            <div className="mb-4 h-1 w-full rounded-full bg-white/20">
+              <div className="h-full w-1/4 rounded-full bg-red-600" />
+            </div>
+            <div className="flex items-center gap-4 text-white">
+              <button
+                className="flex h-12 w-12 items-center justify-center rounded-full bg-white text-black"
+                onClick={handleToggle}
+              >
+                {isPlaying ? <Pause className="size-6" /> : <Play className="size-6" fill="currentColor" />}
+              </button>
+              <div>
+                <p className="text-sm uppercase tracking-[0.3em] text-white/60">Now Playing</p>
+                <p className="text-2xl font-semibold">{state.show.title}</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
   )
 }
 
