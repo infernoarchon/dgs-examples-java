@@ -624,6 +624,50 @@ const HeroCarousel = ({
   )
 }
 
+const useHorizontalScrollControls = (depsKey?: unknown) => {
+  const listRef = useRef<HTMLDivElement | null>(null)
+  const [scrollState, setScrollState] = useState({ prev: false, next: false })
+
+  const updateScrollState = useCallback(() => {
+    const node = listRef.current
+    if (!node) return
+    const { scrollLeft, scrollWidth, clientWidth } = node
+    setScrollState((prevState) => {
+      const nextState = {
+        prev: scrollLeft > 8,
+        next: scrollLeft + clientWidth < scrollWidth - 8,
+      }
+      return prevState.prev === nextState.prev && prevState.next === nextState.next ? prevState : nextState
+    })
+  }, [])
+
+  useEffect(() => {
+    updateScrollState()
+    const node = listRef.current
+    if (!node) return
+    const handleScroll = () => updateScrollState()
+    node.addEventListener("scroll", handleScroll)
+    if (typeof window !== "undefined") {
+      window.addEventListener("resize", updateScrollState)
+    }
+    return () => {
+      node.removeEventListener("scroll", handleScroll)
+      if (typeof window !== "undefined") {
+        window.removeEventListener("resize", updateScrollState)
+      }
+    }
+  }, [updateScrollState, depsKey])
+
+  const scrollByCards = useCallback((direction: -1 | 1) => {
+    const node = listRef.current
+    if (!node) return
+    const scrollAmount = node.clientWidth ? node.clientWidth * 0.9 : 320
+    node.scrollBy({ left: direction * scrollAmount, behavior: "smooth" })
+  }, [])
+
+  return { listRef, scrollState, scrollByCards }
+}
+
 const ContentRow = ({
   title,
   shows,
@@ -636,8 +680,18 @@ const ContentRow = ({
   posters: PosterMap
   accentBadge?: string
   ratingMap?: RatingMap
-}) =>
-  shows.length ? (
+}) => {
+  const { listRef, scrollState, scrollByCards } = useHorizontalScrollControls(shows.length)
+
+  if (!shows.length) {
+    return (
+      <p className="text-sm text-muted-foreground">
+        No titles matched this collection yet — update the Netflix catalog seeds to curate more.
+      </p>
+    )
+  }
+
+  return (
     <section className="space-y-4">
       <div className="flex items-center gap-3">
         <h2 className="text-2xl font-semibold">{title}</h2>
@@ -645,42 +699,61 @@ const ContentRow = ({
           <Badge className="bg-amber-500 text-xs font-semibold text-black">{accentBadge}</Badge>
         ) : null}
       </div>
-      <div className="flex gap-5 overflow-x-auto pb-2">
-        {shows.map((show, index) => (
-          <Card
-            key={`${title}-${show.id}-${index}`}
-            className="group relative w-[230px] shrink-0 overflow-visible border-none bg-transparent text-left shadow-none"
+      <div className="relative">
+        <div ref={listRef} className="flex gap-5 overflow-x-auto pb-2 no-scrollbar scroll-smooth pr-6">
+          {shows.map((show, index) => (
+            <Card
+              key={`${title}-${show.id}-${index}`}
+              className="group relative w-[230px] shrink-0 overflow-visible border-none bg-transparent text-left shadow-none"
+            >
+              <div className="relative aspect-video overflow-hidden rounded-lg shadow-lg transition hover:scale-[1.03]">
+                <img
+                  src={getArtworkForShow(show, posters, "tile")}
+                  alt={`${show.title} poster`}
+                  className="h-full w-full object-cover"
+                  loading="lazy"
+                />
+              </div>
+              <CardContent className="space-y-1 px-0 pt-3">
+                {ratingMap && ratingMap[show.id] ? (
+                  <div className="flex items-center gap-2">
+                    <RatingStars value={ratingMap[show.id].avg} />
+                    <span className="text-xs text-neutral-400">
+                      {ratingMap[show.id].avg.toFixed(1)} / 5
+                    </span>
+                  </div>
+                ) : (
+                  <p className="text-sm text-neutral-400">{formatCollectionLabel(show, index)}</p>
+                )}
+                <h3 className="text-lg font-semibold leading-tight text-white capitalize">{show.title.toLowerCase()}</h3>
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+        {scrollState.prev ? (
+          <button
+            type="button"
+            className="absolute left-0 top-1/3 z-10 -translate-y-1/2 rounded-full bg-black/70 p-3 text-white shadow-lg transition hover:bg-black/90 focus:outline-none focus:ring-2 focus:ring-white/60"
+            onClick={() => scrollByCards(-1)}
+            aria-label={`Scroll ${title} backward`}
           >
-            <div className="relative aspect-video overflow-hidden rounded-lg shadow-lg transition hover:scale-[1.03]">
-              <img
-                src={getArtworkForShow(show, posters, "tile")}
-                alt={`${show.title} poster`}
-                className="h-full w-full object-cover"
-                loading="lazy"
-              />
-            </div>
-            <CardContent className="space-y-1 px-0 pt-3">
-              {ratingMap && ratingMap[show.id] ? (
-                <div className="flex items-center gap-2">
-                  <RatingStars value={ratingMap[show.id].avg} />
-                  <span className="text-xs text-neutral-400">
-                    {ratingMap[show.id].avg.toFixed(1)} / 5
-                  </span>
-                </div>
-              ) : (
-                <p className="text-sm text-neutral-400">{formatCollectionLabel(show, index)}</p>
-              )}
-              <h3 className="text-lg font-semibold leading-tight text-white capitalize">{show.title.toLowerCase()}</h3>
-            </CardContent>
-          </Card>
-        ))}
+            <ArrowLeft className="size-5" />
+          </button>
+        ) : null}
+        {scrollState.next ? (
+          <button
+            type="button"
+            className="absolute right-0 top-1/3 z-10 -translate-y-1/2 rounded-full bg-black/70 p-3 text-white shadow-lg transition hover:bg-black/90 focus:outline-none focus:ring-2 focus:ring-white/60"
+            onClick={() => scrollByCards(1)}
+            aria-label={`Scroll ${title} forward`}
+          >
+            <ArrowRight className="size-5" />
+          </button>
+        ) : null}
       </div>
     </section>
-  ) : (
-    <p className="text-sm text-muted-foreground">
-      No titles matched this collection yet — update the Netflix catalog seeds to curate more.
-    </p>
   )
+}
 
 const MyListTray = ({
   shows,
@@ -693,51 +766,15 @@ const MyListTray = ({
   ratingMap: RatingMap
   onToggleMyList: (show: Show) => void
 }) => (
-  <section className="rounded-3xl border border-white/10 bg-white/5 p-6 shadow-[0_15px_45px_rgba(0,0,0,0.4)]">
+  <section>
     <div className="flex flex-wrap items-end justify-between gap-4">
       <div>
-        <p className="text-xs uppercase tracking-[0.3em] text-neutral-400">Your Queue</p>
         <h2 className="text-2xl font-semibold text-white">My List</h2>
-        <p className="text-sm text-neutral-400">Saved locally so you never lose a recommendation.</p>
       </div>
       {shows.length ? <span className="text-xs text-neutral-400">{shows.length} titles</span> : null}
     </div>
     {shows.length ? (
-      <div className="mt-6 flex gap-5 overflow-x-auto pb-2">
-        {shows.map((show) => (
-          <Card
-            key={`my-list-${show.id}`}
-            className="w-[260px] shrink-0 overflow-hidden border-none bg-black/40 text-left shadow-lg shadow-black/40"
-          >
-            <div className="relative aspect-video overflow-hidden">
-              <img
-                src={getArtworkForShow(show, posters, "tile")}
-                alt={`${show.title} poster`}
-                className="h-full w-full object-cover"
-                loading="lazy"
-              />
-            </div>
-            <CardContent className="space-y-2 px-4 py-4">
-              {ratingMap[show.id] ? (
-                <div className="flex items-center gap-2 text-xs text-neutral-400">
-                  <RatingStars value={ratingMap[show.id].avg} />
-                  <span>{ratingMap[show.id].avg.toFixed(1)} / 5</span>
-                </div>
-              ) : null}
-              <h3 className="text-lg font-semibold text-white">{show.title}</h3>
-              <p className="text-xs text-neutral-400">{taglineFor(show)}</p>
-              <button
-                type="button"
-                className="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-full border border-white/30 px-4 py-1.5 text-[0.65rem] font-semibold uppercase tracking-[0.3em] text-white transition hover:border-white"
-                onClick={() => onToggleMyList(show)}
-              >
-                <X className="size-3" />
-                Remove
-              </button>
-            </CardContent>
-          </Card>
-        ))}
-      </div>
+      <HorizontalCarousel shows={shows} onToggleMyList={onToggleMyList} posters={posters} ratingMap={ratingMap} />
     ) : (
       <div className="mt-6 rounded-2xl border border-dashed border-white/30 bg-black/30 p-6 text-sm text-neutral-300">
         Use the My List buttons across the app (and inside the AI assistant) to pin titles here.
@@ -745,6 +782,85 @@ const MyListTray = ({
     )}
   </section>
 )
+
+const HorizontalCarousel = ({
+  shows,
+  posters,
+  ratingMap,
+  onToggleMyList,
+}: {
+  shows: Show[]
+  posters: PosterMap
+  ratingMap: RatingMap
+  onToggleMyList: (show: Show) => void
+}) => {
+  const { listRef, scrollState, scrollByCards } = useHorizontalScrollControls(shows.length)
+
+  return (
+    <div className="relative mt-6">
+      <div ref={listRef} className="flex gap-5 overflow-x-auto pb-2 pr-6 no-scrollbar scroll-smooth">
+        {shows.map((show, index) => (
+          <Card
+            key={`my-list-${show.id}`}
+            className="group relative w-[230px] shrink-0 overflow-visible border-none bg-transparent text-left shadow-none"
+          >
+            <div className="relative aspect-video overflow-hidden rounded-lg shadow-lg transition hover:scale-[1.03]">
+              <img
+                src={getArtworkForShow(show, posters, "tile")}
+                alt={`${show.title} poster`}
+                className="h-full w-full object-cover"
+                loading="lazy"
+              />
+              <button
+                type="button"
+                className="absolute right-3 top-3 inline-flex items-center justify-center rounded-full bg-black/70 p-2 text-xs uppercase tracking-[0.3em] text-white opacity-0 transition hover:bg-black focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60 group-hover:opacity-100"
+                onClick={() => onToggleMyList(show)}
+                aria-label={`Remove ${show.title} from My List`}
+              >
+                <X className="size-4" />
+              </button>
+            </div>
+            <CardContent className="space-y-1 px-0 pt-3">
+              {ratingMap[show.id] ? (
+                <div className="flex items-center gap-2">
+
+                </div>
+              ) : (
+                <p className="text-sm text-neutral-400">{taglineFor(show)}</p>
+              )}
+              <h3 className="text-lg font-semibold leading-tight text-white capitalize">{show.title.toLowerCase()}</h3>
+              {!ratingMap[show.id] ? (
+                <p className="text-xs uppercase tracking-[0.3em] text-neutral-500">Pinned</p>
+              ) : (
+                <p className="text-xs text-neutral-500"></p>
+              )}
+            </CardContent>
+          </Card>
+        ))}
+      </div>
+      {scrollState.prev ? (
+        <button
+          type="button"
+          className="absolute left-2 top-1/2 z-10 -translate-y-1/2 rounded-full bg-black/70 p-3 text-white shadow-lg transition hover:bg-black/90 focus:outline-none focus:ring-2 focus:ring-white/60"
+          onClick={() => scrollByCards(-1)}
+          aria-label="Scroll My List backward"
+        >
+          <ArrowLeft className="size-5" />
+        </button>
+      ) : null}
+      {scrollState.next ? (
+        <button
+          type="button"
+          className="absolute right-0 top-1/2 z-10 -translate-y-1/2 rounded-full bg-black/70 p-3 text-white shadow-lg transition hover:bg-black/90 focus:outline-none focus:ring-2 focus:ring-white/60"
+          onClick={() => scrollByCards(1)}
+          aria-label="Scroll My List forward"
+        >
+          <ArrowRight className="size-5" />
+        </button>
+      ) : null}
+    </div>
+  )
+}
 
 const PosterStatusBanner = ({
   omdbKeyProvided,
@@ -769,7 +885,7 @@ const PosterStatusBanner = ({
       {isLoading
         ? "Building the Netflix catalog with OMDb metadata..."
         : hasArtwork
-          ? "Synced with OMDb — enjoy the official key art."
+          ? ""
           : "OMDb did not return posters for these titles yet."}
     </div>
   )
