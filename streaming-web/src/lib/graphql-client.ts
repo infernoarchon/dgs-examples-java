@@ -1,54 +1,43 @@
-import { GraphQLClient, gql } from "graphql-request";
+import { NETFLIX_CATALOG, type NetflixCatalogSeed } from "@/data/netflix-catalog"
+import { fetchOmdbDetails } from "@/lib/omdb"
 
-export type Review = {
-  starScore?: number | null
+export type Show = NetflixCatalogSeed & {
+  poster?: string
+  genres?: string[]
+  imdbRating?: number
+  imdbVotes?: number
 }
 
-export type Show = {
-  id: number
-  title: string
-  releaseYear?: number | null
-  reviews?: Review[]
-}
+export async function fetchShows(): Promise<Show[]> {
+  const catalog: Show[] = NETFLIX_CATALOG.map((seed, index) => ({
+    ...seed,
+    id: seed.id ?? index + 1,
+  }))
 
-type ShowsResponse = {
-  shows: Show[]
-}
+  const omdbKey = import.meta.env.VITE_OMDB_API_KEY?.trim()
+  if (!omdbKey) {
+    return catalog
+  }
 
-const endpoint = resolveEndpoint(import.meta.env.VITE_GRAPHQL_URL ?? "/graphql");
+  const detailsMap = await fetchOmdbDetails(catalog, omdbKey)
 
-export const graphQLClient = new GraphQLClient(endpoint, {
-  credentials: "include",
-});
-
-export const SHOWS_QUERY = gql`
-  query ShowsForLanding {
-    shows {
-      id
-      title
-      releaseYear
-      reviews {
-        starScore
-      }
+  return catalog.map((show) => {
+    const omdb = detailsMap[show.id]
+    if (!omdb) {
+      return show
     }
-  }
-`;
 
-export async function fetchShows() {
-  const data = await graphQLClient.request<ShowsResponse>(SHOWS_QUERY)
-  return data.shows ?? []
-}
-
-function resolveEndpoint(target: string) {
-  const trimmed = target.trim()
-  if (/^https?:\/\//i.test(trimmed)) {
-    return trimmed
-  }
-
-  if (typeof window !== "undefined" && window.location) {
-    const prefix = trimmed.startsWith("/") ? "" : "/"
-    return `${window.location.origin}${prefix}${trimmed}`
-  }
-
-  return trimmed
+    return {
+      ...show,
+      releaseYear: show.releaseYear ?? omdb.year ?? show.releaseYear,
+      maturityRating: omdb.rated ?? show.maturityRating,
+      runtimeMinutes: omdb.runtimeMinutes ?? show.runtimeMinutes,
+      synopsis: omdb.plot ?? show.synopsis,
+      poster: omdb.poster ?? show.poster,
+      imdbRating: omdb.imdbRating ?? show.imdbRating,
+      imdbVotes: omdb.imdbVotes ?? show.imdbVotes,
+      type: omdb.type === "movie" || omdb.type === "series" ? omdb.type : show.type,
+      genres: omdb.genres?.length ? omdb.genres : show.genres,
+    }
+  })
 }

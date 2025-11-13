@@ -27,7 +27,6 @@ import { Card, CardContent } from "@/components/ui/card"
 import { Skeleton } from "@/components/ui/skeleton"
 import { fetchShows, type Show } from "@/lib/graphql-client"
 import { fetchHeroClips, type HeroClipMap } from "@/lib/giphy"
-import { fetchOmdbDetails, type OmdbDetailsMap } from "@/lib/omdb"
 import { cn } from "@/lib/utils"
 
 const HERO_INTERVAL = 5500
@@ -62,15 +61,70 @@ const getArtworkForShow = (show: Show, posters: PosterMap, variant: "hero" | "ti
   posters[show.id] ?? buildFallbackArtworkUrl(show, variant)
 
 const fallbackHeroDescription = (show: Show) =>
-  `All ${show.title} episodes from the DGS sample API are ready to stream. Hop back to ${
-    show.releaseYear ?? "the latest"
-  } nostalgia in one click.`
+  show.synopsis ??
+  `${show.title} is streaming globally on Netflix. Queue it up for a ${
+    show.type === "movie" ? "feature-length thrill ride" : "fresh season binge"
+  }.`
 
-const taglineFor = (show: Show) =>
-  `${show.releaseYear ?? "Brand new"} • GraphQL id #${show.id}`
+const formatRuntime = (show: Show) => {
+  if (!show.runtimeMinutes) return null
+  if (show.type === "movie") {
+    const hours = Math.floor(show.runtimeMinutes / 60)
+    const minutes = show.runtimeMinutes % 60
+    if (hours && minutes) return `${hours}h ${minutes}m`
+    if (hours) return `${hours}h`
+    return `${minutes}m`
+  }
+  return `${show.runtimeMinutes}m avg`
+}
 
-const getHeroSummary = (show: Show, details: OmdbDetailsMap) =>
-  details[show.id]?.plot ?? fallbackHeroDescription(show)
+const formatTop10Label = (show: Show) => {
+  if (show.weeklyHoursViewedMillions && show.top10Week) {
+    return `${show.weeklyHoursViewedMillions}M hours • Week of ${show.top10Week}`
+  }
+  if (show.popularityScore) {
+    return `Popularity ${(show.popularityScore * 100).toFixed(0)}%`
+  }
+  return null
+}
+
+const taglineFor = (show: Show) => {
+  const parts: string[] = []
+  if (show.releaseYear) {
+    parts.push(String(show.releaseYear))
+  }
+  parts.push(show.type === "movie" ? "Netflix Film" : "Netflix Series")
+  if (show.maturityRating) {
+    parts.push(show.maturityRating)
+  }
+  const runtimeLabel = formatRuntime(show)
+  if (runtimeLabel) {
+    parts.push(runtimeLabel)
+  }
+  const top10 = formatTop10Label(show)
+  if (top10) {
+    parts.push(top10)
+  }
+  return parts.join(" • ")
+}
+
+const formatCollectionLabel = (show: Show, index: number) => {
+  if (show.top10Week) {
+    return `Top ${index + 1} • Week of ${show.top10Week}`
+  }
+  if (show.collections.includes("movies")) {
+    return "Now streaming on Netflix Films"
+  }
+  if (show.collections.includes("global")) {
+    return "Global sensation"
+  }
+  if (show.popularityScore) {
+    return `Popularity ${(show.popularityScore * 100).toFixed(0)}%`
+  }
+  return `#${index + 1} on Netflix`
+}
+
+const getHeroSummary = (show: Show) => fallbackHeroDescription(show)
 
 const NETFLIX_LOGO = "/images/logos/netflix-logo.svg"
 const LOGO_MAP: Record<string, string> = {
@@ -139,12 +193,12 @@ const Header = ({ onSearch }: { onSearch: () => void }) => {
             <ChevronDown className="size-3" />
           </div>
           <a
-            href="http://localhost:8080/graphiql"
+            href="https://top10.netflix.com/"
             target="_blank"
             rel="noreferrer"
             className="rounded-md border border-white/30 px-3 py-1 text-xs uppercase tracking-[0.2em] text-white/80 hover:text-white"
           >
-            GraphiQL
+            Top 10
           </a>
         </div>
       </div>
@@ -181,7 +235,15 @@ export default function App() {
     staleTime: 1000 * 60,
   })
 
-  const curated = useMemo(() => shows.slice(0, 5), [shows])
+  const heroShows = useMemo(() => {
+    const spotlight = [...shows]
+      .filter((show) => show.collections.includes("spotlight"))
+      .sort(
+        (a, b) => (a.heroPriority ?? Number.MAX_SAFE_INTEGER) - (b.heroPriority ?? Number.MAX_SAFE_INTEGER)
+      )
+    const picks = spotlight.length ? spotlight : shows
+    return picks.slice(0, 5)
+  }, [shows])
   const toggleMyList = useCallback((showId: number) => {
     setMyListIds((prev) => (prev.includes(showId) ? prev.filter((id) => id !== showId) : [...prev, showId]))
   }, [])
@@ -202,10 +264,17 @@ export default function App() {
   const ratingMap = useMemo<RatingMap>(() => {
     const map: RatingMap = {}
     shows.forEach((show) => {
-      const scores = (show.reviews ?? []).map((review) => review.starScore).filter((s): s is number => typeof s === "number")
-      if (scores.length) {
-        const avg = scores.reduce((sum, score) => sum + score, 0) / scores.length
-        map[show.id] = { avg, count: scores.length }
+      const ratingOutOf10 =
+        typeof show.imdbRating === "number"
+          ? show.imdbRating
+          : typeof show.popularityScore === "number"
+            ? show.popularityScore * 10
+            : null
+      if (ratingOutOf10 && ratingOutOf10 > 0) {
+        map[show.id] = {
+          avg: Math.min(5, Math.max(0, Number((ratingOutOf10 / 2).toFixed(1)))),
+          count: show.imdbVotes ?? Math.max(1, Math.round((show.popularityScore ?? 0.5) * 100000)),
+        }
       }
     })
     return map
@@ -214,7 +283,7 @@ export default function App() {
   const topRated = useMemo(
     () =>
       [...shows]
-        .filter((show) => ratingMap[show.id])
+        .filter((show) => show.type === "series" && ratingMap[show.id])
         .sort((a, b) => {
           const avgB = ratingMap[b.id]?.avg ?? 0
           const avgA = ratingMap[a.id]?.avg ?? 0
@@ -223,35 +292,33 @@ export default function App() {
         .slice(0, 10),
     [shows, ratingMap]
   )
-  const omdbApiKey = import.meta.env.VITE_OMDB_API_KEY
-  const posterKey = useMemo(() => shows.map((show) => `${show.id}-${show.title}`).join("|"), [shows])
 
-  const {
-    data: omdbDetails = {},
-    isFetching: postersLoading,
-  } = useQuery<OmdbDetailsMap>({
-    queryKey: ["omdb-posters", posterKey, omdbApiKey],
-    queryFn: () => fetchOmdbDetails(shows, omdbApiKey!),
-    enabled: Boolean(omdbApiKey && shows.length),
-    staleTime: 1000 * 60 * 60,
-  })
+  const trendingNow = useMemo(() => {
+    const trending = shows.filter((show) => show.collections.includes("trending"))
+    const ordered = [...trending].sort((a, b) => (b.popularityScore ?? 0) - (a.popularityScore ?? 0))
+    const fallback = shows.filter((show) => !show.collections.includes("trending"))
+    return (ordered.length ? ordered : fallback).slice(0, 12)
+  }, [shows])
+
+  const omdbApiKey = import.meta.env.VITE_OMDB_API_KEY
 
   const posterMap = useMemo<PosterMap>(() => {
     const map: PosterMap = {}
-    Object.entries(omdbDetails).forEach(([id, meta]) => {
-      if (meta.poster) {
-        map[Number(id)] = meta.poster
+    shows.forEach((show) => {
+      if (show.poster) {
+        map[show.id] = show.poster
       }
     })
     return map
-  }, [omdbDetails])
+  }, [shows])
 
+  const giphySeed = useMemo(() => shows.map((show) => `${show.id}-${show.title}`).join("|"), [shows])
   const giphyApiKey = import.meta.env.VITE_GIPHY_API_KEY
   const {
     data: heroClips = {},
     isFetching: clipsLoading,
   } = useQuery({
-    queryKey: ["giphy-clips", posterKey, giphyApiKey],
+    queryKey: ["giphy-clips", giphySeed, giphyApiKey],
     queryFn: () => fetchHeroClips(shows, giphyApiKey!),
     enabled: Boolean(giphyApiKey && shows.length),
     staleTime: 1000 * 60 * 60,
@@ -269,12 +336,11 @@ export default function App() {
     <div className="mx-auto max-w-[1400px] px-6">
       <ErrorState message={(error as Error).message} onRetry={refetch} />
     </div>
-  ) : curated.length ? (
+  ) : heroShows.length ? (
     <HeroCarousel
-      shows={curated}
+      shows={heroShows}
       posters={posterMap}
       clips={heroClips}
-      details={omdbDetails}
       onPlay={launchPlayer}
       onToggleMyList={toggleMyListForShow}
       isInMyList={isInMyList}
@@ -293,7 +359,7 @@ export default function App() {
       <main className="relative z-20 -mt-28 mx-auto flex max-w-[1400px] flex-col gap-14 pb-20">
         <PosterStatusBanner
           omdbKeyProvided={Boolean(omdbApiKey)}
-          isLoading={postersLoading}
+          isLoading={isLoading}
           hasArtwork={Object.keys(posterMap).length > 0}
         />
         <ClipStatusBanner
@@ -306,21 +372,12 @@ export default function App() {
           <RowSkeleton />
         ) : error ? null : (
           <>
-            <ContentRow
-              title="Top Rated TV Shows"
-              shows={topRated}
-              posters={posterMap}
-              ratingMap={ratingMap}
-              onToggleMyList={toggleMyListForShow}
-              isInMyList={isInMyList}
-            />
+            <ContentRow title="Top Rated Netflix Series" shows={topRated} posters={posterMap} ratingMap={ratingMap} />
             <ContentRow
               title="Trending Now"
-              shows={[...shows].reverse()}
+              shows={trendingNow}
               posters={posterMap}
               accentBadge="Top 10"
-              onToggleMyList={toggleMyListForShow}
-              isInMyList={isInMyList}
             />
             <MyListTray
               shows={myListShows}
@@ -355,7 +412,6 @@ const HeroCarousel = ({
   shows,
   posters,
   clips,
-  details,
   onPlay,
   onToggleMyList,
   isInMyList,
@@ -363,7 +419,6 @@ const HeroCarousel = ({
   shows: Show[]
   posters: PosterMap
   clips: HeroClipMap
-  details: OmdbDetailsMap
   onPlay: (show: Show, clip?: string | null) => void
   onToggleMyList?: (show: Show) => void
   isInMyList?: (showId: number) => boolean
@@ -489,7 +544,7 @@ const HeroCarousel = ({
               {activeShow.title}
             </h1>
           )}
-          <p className="max-w-5xl text-lg text-neutral-100">{getHeroSummary(activeShow, details)}</p>
+          <p className="max-w-5xl text-lg text-neutral-100">{getHeroSummary(activeShow)}</p>
           <div className="flex flex-wrap gap-3 transition duration-700 ease-in-out">
             <Button
               size="lg"
@@ -517,6 +572,11 @@ const HeroCarousel = ({
               size="lg"
               variant="outline"
               className="gap-2 rounded bg-white/20 px-6 text-base font-semibold text-white hover:bg-white/30"
+              onClick={() => {
+                if (activeShow.netflixUrl) {
+                  window.open(activeShow.netflixUrl, "_blank", "noopener,noreferrer")
+                }
+              }}
             >
               <Info className="size-5" />
               More Info
@@ -526,7 +586,9 @@ const HeroCarousel = ({
 
         <div className="mt-10 flex items-center justify-between text-sm text-neutral-100 transition duration-700 ease-in-out">
           <div className="flex items-center gap-4">
-            <span className="rounded border border-white/50 px-3 py-1 text-xs font-semibold">R</span>
+            <span className="rounded border border-white/50 px-3 py-1 text-xs font-semibold">
+              {activeShow.maturityRating ?? "TV-14"}
+            </span>
             <span>{taglineFor(activeShow)}</span>
           </div>
           <div className="hidden items-center gap-3 md:flex">
@@ -546,10 +608,10 @@ const HeroCarousel = ({
             <button
               key={show.id}
               aria-label={`Go to ${show.title}`}
-            onClick={() => {
-              setIsAnimating(false)
-              requestAnimationFrame(() => setCurrent(index))
-            }}
+              onClick={() => {
+                setIsAnimating(false)
+                requestAnimationFrame(() => setCurrent(index))
+              }}
               className={cn(
                 "h-1 rounded-full transition-all",
                 index === current ? "w-12 bg-white" : "w-5 bg-white/40"
@@ -568,16 +630,12 @@ const ContentRow = ({
   posters,
   accentBadge,
   ratingMap,
-  onToggleMyList,
-  isInMyList,
 }: {
   title: string
   shows: Show[]
   posters: PosterMap
   accentBadge?: string
   ratingMap?: RatingMap
-  onToggleMyList?: (show: Show) => void
-  isInMyList?: (showId: number) => boolean
 }) =>
   shows.length ? (
     <section className="space-y-4">
@@ -610,7 +668,7 @@ const ContentRow = ({
                   </span>
                 </div>
               ) : (
-                <p className="text-sm text-neutral-400">#{index + 1} in TV Shows Today</p>
+                <p className="text-sm text-neutral-400">{formatCollectionLabel(show, index)}</p>
               )}
               <h3 className="text-lg font-semibold leading-tight text-white capitalize">{show.title.toLowerCase()}</h3>
             </CardContent>
@@ -619,7 +677,9 @@ const ContentRow = ({
       </div>
     </section>
   ) : (
-    <p className="text-sm text-muted-foreground">No shows yet — add one through the DGS backend.</p>
+    <p className="text-sm text-muted-foreground">
+      No titles matched this collection yet — update the Netflix catalog seeds to curate more.
+    </p>
   )
 
 const MyListTray = ({
@@ -698,7 +758,8 @@ const PosterStatusBanner = ({
   if (!omdbKeyProvided) {
     return (
       <div className="rounded-xl bg-white/5 px-5 py-3 text-sm text-neutral-300">
-        Using placeholder artwork. Set <code className="text-xs">VITE_OMDB_API_KEY</code> to pull official posters.
+        Using placeholder artwork. Set <code className="text-xs">VITE_OMDB_API_KEY</code> to pull official posters and
+        plots from OMDb.
       </div>
     )
   }
@@ -706,10 +767,10 @@ const PosterStatusBanner = ({
   return (
     <div className="rounded-xl text-sm text-emerald-100">
       {isLoading
-        ? "Fetching posters from OMDb..."
+        ? "Building the Netflix catalog with OMDb metadata..."
         : hasArtwork
-          ? ""
-          : "No posters were returned for these titles yet."}
+          ? "Synced with OMDb — enjoy the official key art."
+          : "OMDb did not return posters for these titles yet."}
     </div>
   )
 }
@@ -812,9 +873,16 @@ const ChatSidebar = ({
     () =>
       shows.map((show) => ({
         title: show.title,
+        type: show.type,
         releaseYear: show.releaseYear,
+        maturityRating: show.maturityRating,
+        synopsis: show.synopsis,
         avgRating: ratingMap[show.id]?.avg ?? null,
+        imdbRating: show.imdbRating ?? null,
         poster: posterMap[show.id] ?? null,
+        collections: show.collections,
+        tags: show.tags,
+        netflixUrl: show.netflixUrl,
       })),
     [shows, ratingMap, posterMap]
   )
@@ -830,9 +898,9 @@ const ChatSidebar = ({
     setIsSending(true)
 
     const prompt = [
-      "You are a streaming concierge for the Netflix DGS sample app.",
-      "Recommend shows strictly from the provided catalog JSON.",
-      "Return JSON matching {\"summary\": string, \"recommendations\": [{\"title\": string, \"reason\": string}]} with at most 3 items.",
+      "You are a Netflix programming concierge for an OMDb-enriched catalog.",
+      "Only recommend titles that exist in the provided catalog JSON (all are available on Netflix).",
+      "Return JSON matching {\"summary\": string, \"recommendations\": [{\"title\": string, \"reason\": string}]} with at most 3 items and reference genres, tags, or maturity ratings when relevant.",
       "Catalog:",
       JSON.stringify(showContext),
       `User request: ${userMessage.content}`,
@@ -1233,7 +1301,7 @@ const EmptyState = () => (
   <div className="rounded-3xl border border-white/10 bg-card/40 px-6 py-16 text-center">
     <h2 className="text-2xl font-semibold">No shows yet</h2>
     <p className="mt-2 text-muted-foreground">
-      Add shows through the Java service and they will appear here automatically.
+      Update <code className="text-xs">src/data/netflix-catalog.ts</code> with more titles to grow this catalog.
     </p>
   </div>
 )
