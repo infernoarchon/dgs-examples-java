@@ -1,12 +1,14 @@
-import { useEffect, useMemo, useRef, useState, type ComponentProps } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState, type ComponentProps } from "react"
 import { useQuery } from "@tanstack/react-query"
 import {
   ArrowLeft,
   ArrowRight,
   Bell,
+  Check,
   ChevronDown,
   Info,
   Play,
+  Plus,
   Search,
   Star,
   StarHalf,
@@ -33,6 +35,22 @@ const NAV_LINKS = ["Home", "Shows", "Movies", "New & Popular", "My List", "Brows
 type PosterMap = Record<number, string>
 type RatingMap = Record<number, { avg: number; count: number }>
 type Recommendation = { title: string; reason: string }
+const MY_LIST_STORAGE_KEY = "dgs-my-list"
+
+const readStoredMyList = (): number[] => {
+  if (typeof window === "undefined") return []
+  try {
+    const raw = window.localStorage.getItem(MY_LIST_STORAGE_KEY)
+    if (!raw) return []
+    const parsed = JSON.parse(raw)
+    if (!Array.isArray(parsed)) return []
+    return parsed
+      .map((value) => (typeof value === "number" ? value : Number(value)))
+      .filter((value) => Number.isFinite(value))
+  } catch {
+    return []
+  }
+}
 
 const buildFallbackArtworkUrl = (show: Show, variant: "hero" | "tile" = "hero") => {
   const seed = encodeURIComponent(show.title.toLowerCase().replace(/\s+/g, "-"))
@@ -140,6 +158,18 @@ export default function App() {
     show: Show | null
     clip?: string | null
   }>({ show: null, clip: null })
+  const [myListIds, setMyListIds] = useState<number[]>(() => readStoredMyList())
+
+  useEffect(() => {
+    if (typeof window === "undefined") return
+    setMyListIds(readStoredMyList())
+  }, [])
+
+  useEffect(() => {
+    if (typeof window === "undefined") return
+    window.localStorage.setItem(MY_LIST_STORAGE_KEY, JSON.stringify(myListIds))
+  }, [myListIds])
+
   const {
     data: shows = [],
     isLoading,
@@ -152,6 +182,22 @@ export default function App() {
   })
 
   const curated = useMemo(() => shows.slice(0, 5), [shows])
+  const toggleMyList = useCallback((showId: number) => {
+    setMyListIds((prev) => (prev.includes(showId) ? prev.filter((id) => id !== showId) : [...prev, showId]))
+  }, [])
+  const isInMyList = useCallback((showId: number) => myListIds.includes(showId), [myListIds])
+  const toggleMyListForShow = useCallback(
+    (show: Show) => {
+      toggleMyList(show.id)
+    },
+    [toggleMyList]
+  )
+  const myListShows = useMemo(() => {
+    const showById = new Map(shows.map((show) => [show.id, show]))
+    return myListIds
+      .map((id) => showById.get(id))
+      .filter((show): show is Show => Boolean(show))
+  }, [myListIds, shows])
 
   const ratingMap = useMemo<RatingMap>(() => {
     const map: RatingMap = {}
@@ -230,6 +276,8 @@ export default function App() {
       clips={heroClips}
       details={omdbDetails}
       onPlay={launchPlayer}
+      onToggleMyList={toggleMyListForShow}
+      isInMyList={isInMyList}
     />
   ) : (
     <div className="mx-auto max-w-[1400px] px-6">
@@ -263,12 +311,22 @@ export default function App() {
               shows={topRated}
               posters={posterMap}
               ratingMap={ratingMap}
+              onToggleMyList={toggleMyListForShow}
+              isInMyList={isInMyList}
             />
             <ContentRow
               title="Trending Now"
               shows={[...shows].reverse()}
               posters={posterMap}
               accentBadge="Top 10"
+              onToggleMyList={toggleMyListForShow}
+              isInMyList={isInMyList}
+            />
+            <MyListTray
+              shows={myListShows}
+              posters={posterMap}
+              ratingMap={ratingMap}
+              onToggleMyList={toggleMyListForShow}
             />
           </>
         )}
@@ -281,6 +339,8 @@ export default function App() {
         posterMap={posterMap}
         clips={heroClips}
         onLaunchPlayer={(show, clip) => launchPlayer(show, clip)}
+        onToggleMyList={toggleMyListForShow}
+        isInMyList={isInMyList}
       />
       <PlayerOverlay
         state={playerState}
@@ -297,12 +357,16 @@ const HeroCarousel = ({
   clips,
   details,
   onPlay,
+  onToggleMyList,
+  isInMyList,
 }: {
   shows: Show[]
   posters: PosterMap
   clips: HeroClipMap
   details: OmdbDetailsMap
   onPlay: (show: Show, clip?: string | null) => void
+  onToggleMyList?: (show: Show) => void
+  isInMyList?: (showId: number) => boolean
 }) => {
   const [current, setCurrent] = useState(0)
   const [isAnimating, setIsAnimating] = useState(false)
@@ -340,6 +404,7 @@ const HeroCarousel = ({
   const heroClip = heroClipData.secondary ?? heroClipData.primary ?? null
   const backgroundFallback = getArtworkForShow(activeShow, posters, "hero")
   const isVideo = heroClip ? /\.mp4($|\?)/i.test(heroClip) : false
+  const savedToList = isInMyList?.(activeShow.id) ?? false
 
   return (
     <section className="relative h-[calc(100vh-70px)] min-h-[560px] w-full overflow-hidden bg-black">
@@ -429,11 +494,25 @@ const HeroCarousel = ({
             <Button
               size="lg"
               className="gap-2 rounded bg-white px-6 text-base font-semibold text-black hover:bg-white/90"
-            onClick={() => onPlay(activeShow, heroClipData.primary ?? heroClip)}
+              onClick={() => onPlay(activeShow, heroClipData.primary ?? heroClip)}
             >
               <Play className="size-5 text-black" fill="currentColor" />
               Play
             </Button>
+            {onToggleMyList && isInMyList ? (
+              <Button
+                size="lg"
+                variant="outline"
+                className={cn(
+                  "gap-2 rounded px-6 text-base font-semibold text-white transition",
+                  savedToList ? "bg-white/30 hover:bg-white/40" : "bg-white/20 hover:bg-white/30"
+                )}
+                onClick={() => onToggleMyList(activeShow)}
+              >
+                {savedToList ? <Check className="size-5" /> : <Plus className="size-5" />}
+                {savedToList ? "In My List" : "My List"}
+              </Button>
+            ) : null}
             <Button
               size="lg"
               variant="outline"
@@ -489,12 +568,16 @@ const ContentRow = ({
   posters,
   accentBadge,
   ratingMap,
+  onToggleMyList,
+  isInMyList,
 }: {
   title: string
   shows: Show[]
   posters: PosterMap
   accentBadge?: string
   ratingMap?: RatingMap
+  onToggleMyList?: (show: Show) => void
+  isInMyList?: (showId: number) => boolean
 }) =>
   shows.length ? (
     <section className="space-y-4">
@@ -538,6 +621,70 @@ const ContentRow = ({
   ) : (
     <p className="text-sm text-muted-foreground">No shows yet — add one through the DGS backend.</p>
   )
+
+const MyListTray = ({
+  shows,
+  posters,
+  ratingMap,
+  onToggleMyList,
+}: {
+  shows: Show[]
+  posters: PosterMap
+  ratingMap: RatingMap
+  onToggleMyList: (show: Show) => void
+}) => (
+  <section className="rounded-3xl border border-white/10 bg-white/5 p-6 shadow-[0_15px_45px_rgba(0,0,0,0.4)]">
+    <div className="flex flex-wrap items-end justify-between gap-4">
+      <div>
+        <p className="text-xs uppercase tracking-[0.3em] text-neutral-400">Your Queue</p>
+        <h2 className="text-2xl font-semibold text-white">My List</h2>
+        <p className="text-sm text-neutral-400">Saved locally so you never lose a recommendation.</p>
+      </div>
+      {shows.length ? <span className="text-xs text-neutral-400">{shows.length} titles</span> : null}
+    </div>
+    {shows.length ? (
+      <div className="mt-6 flex gap-5 overflow-x-auto pb-2">
+        {shows.map((show) => (
+          <Card
+            key={`my-list-${show.id}`}
+            className="w-[260px] shrink-0 overflow-hidden border-none bg-black/40 text-left shadow-lg shadow-black/40"
+          >
+            <div className="relative aspect-video overflow-hidden">
+              <img
+                src={getArtworkForShow(show, posters, "tile")}
+                alt={`${show.title} poster`}
+                className="h-full w-full object-cover"
+                loading="lazy"
+              />
+            </div>
+            <CardContent className="space-y-2 px-4 py-4">
+              {ratingMap[show.id] ? (
+                <div className="flex items-center gap-2 text-xs text-neutral-400">
+                  <RatingStars value={ratingMap[show.id].avg} />
+                  <span>{ratingMap[show.id].avg.toFixed(1)} / 5</span>
+                </div>
+              ) : null}
+              <h3 className="text-lg font-semibold text-white">{show.title}</h3>
+              <p className="text-xs text-neutral-400">{taglineFor(show)}</p>
+              <button
+                type="button"
+                className="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-full border border-white/30 px-4 py-1.5 text-[0.65rem] font-semibold uppercase tracking-[0.3em] text-white transition hover:border-white"
+                onClick={() => onToggleMyList(show)}
+              >
+                <X className="size-3" />
+                Remove
+              </button>
+            </CardContent>
+          </Card>
+        ))}
+      </div>
+    ) : (
+      <div className="mt-6 rounded-2xl border border-dashed border-white/30 bg-black/30 p-6 text-sm text-neutral-300">
+        Use the My List buttons across the app (and inside the AI assistant) to pin titles here.
+      </div>
+    )}
+  </section>
+)
 
 const PosterStatusBanner = ({
   omdbKeyProvided,
@@ -627,6 +774,8 @@ const ChatSidebar = ({
   posterMap,
   clips,
   onLaunchPlayer,
+  onToggleMyList,
+  isInMyList,
 }: {
   open: boolean
   onClose: () => void
@@ -635,6 +784,8 @@ const ChatSidebar = ({
   posterMap: PosterMap
   clips: HeroClipMap
   onLaunchPlayer: (show: Show, clip?: string | null) => void
+  onToggleMyList: (show: Show) => void
+  isInMyList: (showId: number) => boolean
 }) => {
   const [messages, setMessages] = useState<ChatMessage[]>([
     {
@@ -859,14 +1010,28 @@ const ChatSidebar = ({
                             <h4 className="mt-2 text-lg font-semibold">{rec.title}</h4>
                             <p className="text-sm text-neutral-300">{rec.reason}</p>
                             {show ? (
-                              <button
-                                type="button"
-                                className="mt-4 flex w-full items-center justify-center gap-2 rounded-full bg-white/90 px-4 py-2 text-xs font-semibold uppercase tracking-widest text-black transition hover:bg-white"
-                                onClick={() => onLaunchPlayer(show, clip)}
-                              >
-                                <Play className="size-3" fill="currentColor" />
-                                Watch
-                              </button>
+                              <div className="mt-4 space-y-2">
+                                <button
+                                  type="button"
+                                  className="flex w-full items-center justify-center gap-2 rounded-full bg-white/90 px-4 py-2 text-xs font-semibold uppercase tracking-widest text-black transition hover:bg-white"
+                                  onClick={() => onLaunchPlayer(show, clip)}
+                                >
+                                  <Play className="size-3" fill="currentColor" />
+                                  Watch
+                                </button>
+                                <button
+                                  type="button"
+                                  className="flex w-full items-center justify-center gap-2 rounded-full border border-white/20 px-4 py-2 text-xs font-semibold uppercase tracking-widest text-white/80 transition hover:border-white hover:text-white"
+                                  onClick={() => onToggleMyList(show)}
+                                >
+                                  {isInMyList(show.id) ? (
+                                    <Check className="size-3" />
+                                  ) : (
+                                    <Plus className="size-3" />
+                                  )}
+                                  {isInMyList(show.id) ? "In My List" : "Add to My List"}
+                                </button>
+                              </div>
                             ) : null}
                           </div>
                         ))}
